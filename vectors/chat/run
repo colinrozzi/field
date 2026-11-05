@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Check field/chatmodel.wisp against the chat vectors (README.md here).
+
+    field/vectors/chat/run [CASE.json ...]
+
+Starts its own theater-repl daemon on a free port, with a temporary
+filesystem root holding a copy of field/ and its own config (no services, no
+real keys), feeds each case's events to chat-add, asks the model for each fact
+in `expect`, and stops the daemon. Nothing touches the real node.
+"""
+import json, os, shutil, signal, socket, subprocess, sys, tempfile, time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+FIELD = HERE.parent.parent
+F, L = "~~F~~", "~~L~~"   # field and list separators in the model's answers
+
+
+def wstr(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class Daemon:
+    def __enter__(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="chat-vectors-"))
+        root = self.tmp / "root"
+        (root / "experiment").mkdir(parents=True)
+        shutil.copytree(FIELD, root / "experiment" / "field", ignore=shutil.ignore_patterns("events"))
+        (self.tmp / "keys").mkdir()
+        cfg = self.tmp / "config.toml"
+        cfg.write_text(f'[filesystem]\nroot = "{root}"\n[keys]\ndir = "{self.tmp / "keys"}"\n')
+        self.env = dict(os.environ, THEATER_REPL_PORT=str(free_port()))
+        self.proc = subprocess.Popen(["theater-repl", "--config", str(cfg), "serve"], env=self.env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     start_new_session=True)
+        for _ in range(50):
+            if subprocess.run(["theater-repl", "status"], env=self.env, capture_output=True).returncode == 0:
+                break
+            time.sleep(0.2)
+        subprocess.run(["theater-repl", "new", "vectors"], env=self.env, check=True, capture_output=True)
+        self.eval('(require list "std/list.wisp")')
+        self.eval('(require chatmodel "experiment/field/chatmodel.wisp")')
+        return self
+
+    def eval(self, form):
+        r = subprocess.run(["theater-repl", "eval", "vectors", "-"], input=form, env=self.env,
+                           capture_output=True, text=True)
+        if r.returncode != 0 or r.stdout.startswith("error"):
+            raise RuntimeError((r.stdout + r.stderr).strip())
+        return r.stdout[:-1] if r.stdout.endswith("\n") else r.stdout
+
+    def __exit__(self, *a):
+        os.killpg(self.proc.pid, signal.SIGTERM)
+        self.proc.wait(10)
+        shutil.rmtree(self.tmp)
+
+
+def canon(file_text):
+    return file_text.split("\n", 1)[1]   # without the sig line
+
+
+JOIN = f'''(begin
+  (define join-l (lambda (xs) (fold (lambda (acc x) (string-append acc x "{L}")) "" xs)))
+  (define join-f (lambda (xs) (fold (lambda (acc x) (string-append acc "{F}" x)) "" xs)))
+  "ok")'''
+
+
+def lst(v):
+    return [] if v in ("", None) else v.split(L)[:-1]
+
+
+def check(d, case):
+    dirn = "cv-" + case["name"]
+    d.eval(f'(chat-start {wstr(dirn)})')
+    for id_, scope, kind, text in case["events"]:
+        d.eval(f'(chat-add {wstr(dirn)} {wstr(id_)} {wstr(scope)} {wstr(kind)} {wstr(canon(text))})')
+    fails = []
+    exp = case["expect"]
+
+    def raw(form):
+        out = d.eval(f'(let (x {form}) (if (null? x) "-none-" (join-f x)))')
+        return None if out == "-none-" else out.split(F)[1:]
+
+    for id_, want in exp.get("msgs", {}).items():
+        m = raw(f'(chat-msg {wstr(dirn)} {wstr(id_)})')
+        if m is None:
+            fails.append(f"msg {id_[:8]} missing"); continue
+        got = {"b": m[0], "from": m[1], "re": m[2] or None, "text": F.join(m[3:])}
+        for k, v in want.items():
+            if got[k] != v:
+                fails.append(f"msg {id_[:8]} {k}: {got[k]!r} != {v!r}")
+    for id_ in exp.get("no_msgs", []):
+        if raw(f'(chat-msg {wstr(dirn)} {wstr(id_)})') is not None:
+            fails.append(f"msg {id_[:8]} should not exist")
+    for name, want in exp.get("branches", {}).items():
+        b = raw(f'(let (b (chat-branch {wstr(dirn)} {wstr(name)})) (if (null? b) b (list (list-get b 0) (join-l (list-get b 1)) (join-l (list-get b 2)) (join-l (map (lambda (kv) (string-append (car kv) "=" (car (cdr kv)))) (list-get b 3))))))')
+        if b is None:
+            fails.append(f"branch {name} missing"); continue
+        state = dict(kv.split("=", 1) for kv in lst(b[3]))
+        got = {"anchor": b[0] or None, "tips": set(lst(b[1])), "members": set(lst(b[2])), "state": state}
+        for k, v in want.items():
+            v = set(v) if k in ("tips", "members") else v
+            if got[k] != v:
+                fails.append(f"branch {name} {k}: {got[k]!r} != {v!r}")
+    for name in exp.get("no_branches", []):
+        if raw(f'(chat-branch {wstr(dirn)} {wstr(name)})') is not None:
+            fails.append(f"branch {name!r} should not exist")
+    for root, want in exp.get("threads", {}).items():
+        t = raw(f'(let (t (chat-thread {wstr(dirn)} {wstr(root)})) (if (null? t) t (map join-l t)))')
+        if t is None:
+            fails.append(f"thread {root[:8]} missing"); continue
+        got = {"tips": set(lst(t[0])), "replies": lst(t[1]), "people": set(lst(t[2]))}
+        for k, v in want.items():
+            v = set(v) if k in ("tips", "people") else v
+            if got[k] != v:
+                fails.append(f"thread {root[:8]} {k}: {got[k]!r} != {v!r}")
+    if "tickets" in exp:
+        t = raw(f'(list (join-l (map (lambda (t) (string-append (car t) " " (car (cdr t)))) (chat-tickets {wstr(dirn)}))))')
+        got = [x.split(" ", 1) for x in lst(t[0])] if t else []
+        if got != exp["tickets"]:
+            fails.append(f"tickets: {got!r} != {exp['tickets']!r}")
+    return fails
+
+
+def main():
+    files = [Path(a) for a in sys.argv[1:]] or sorted(HERE.glob("*.json"))
+    bad = 0
+    with Daemon() as d:
+        d.eval(JOIN)
+        for f in files:
+            case = json.loads(f.read_text())
+            try:
+                fails = check(d, case)
+            except RuntimeError as e:
+                fails = [f"error: {e}"]
+            print(("ok   " if not fails else "FAIL ") + f.name)
+            for x in fails:
+                print("     " + x)
+            bad += bool(fails)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()
