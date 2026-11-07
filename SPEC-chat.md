@@ -85,9 +85,11 @@ and writes as `from colin` through node-chat:
 | verb | arg | rest | writes |
 |---|---|---|---|
 | `msg` | the root replied to, or `-` | the text (non-empty) | one `chat.msg` |
-| `branch` | the anchor, or `-` | members, space-separated | one `chat.branch`, then a `chat.join` for `colin` and for each member |
+| `branch` | the anchor, or `-` | members, space-separated, then optionally LF and a group name | with a group: that new open group first (field/SPEC-group.md 5), then `chat.branch`, `chat.set group`; then a `chat.join` for `colin` and for each member |
+| `join` | the branch's group, or `-` | empty | a `group.add` of colin (role write) if a group is given, and a `chat.join` |
 | `set` | `status`, `doc-status` or `doc` | for `status` one of `open`, `assigned`, `review`, `done`; for `doc-status` `draft` or `decided`; for `doc` a title (one line, 1 to 200 bytes) | one `chat.set` |
-| `doc` | `-` | a title, then optionally LF and members | `chat.set` `doc` and `doc-status` = `draft`, then a `chat.join` for `colin` and each member |
+| `doc` | `-` | `<title>\n<members>\n<group>\n<discussion branch>` | a document in `doc/<branch field>` (field/SPEC-group.md 6): the group, the discussion branch in it, then `doc.set` title, status `draft`, group, branch. The older `<title>[\n<members>]` makes the branch a document (`chat.set` `doc`, `doc-status`) |
+| `dedit`, `dset`, `dcomment` | as `edit`; `status` or `title`; as `comment` | as `edit`; the value; `<doc>\n<text>` | for a document in `doc/`: a `doc.edit` or `doc.set` in `doc/<branch field>`, or a `chat.msg` in the discussion branch (the branch field) with `doc` and `sec` |
 | `edit` | the section | `<after or ->\n<title>\n<text>` (title at most 200 bytes) | one `chat.edit` (field/SPEC-doc.md); the parents are the heads the editor opened on |
 | `comment` | the section | the text (non-empty) | one `chat.msg` with `sec` |
 | `resolve` | the comment (64 hex) | `yes` or `no`, LF, then the text (`resolved`/`reopened` if empty) | one `chat.msg`, a reply with `resolve` |

@@ -130,5 +130,33 @@ cases.append({"name": "earliest-place", "about": "a section's place is the after
              "sections": {"p": [["b", ids(c, 3), False], ["a", ids(c, 2), False], ["c", ids(c, 4, 5), False]]},
              "no_edits": ids(c, 6, 7, 8)}})
 
+# 8: a document in its own scope, doc/<D> (field/SPEC-group.md 6)
+c = 6
+D = "doc/policy"
+dset = lambda n, t, k, v: event(c, n, "doc.set", t, [], [("from", "colin"), ("key", k)], v, scope=D)
+dedit = lambda n, t, par, sec, title, text, who="tova", after=None: event(c, n, "doc.edit", t, par,
+    [("from", who), ("sec", sec), ("title", title)] + ([("after", after)] if after else []), text, scope=D)
+evs = [dset(1, 0, "title", "Permissions policy"), dset(2, 0, "status", "draft"), dset(3, 0, "group", "policy"),
+       dset(4, 0, "branch", "policy-talk"), dset(5, 0, "bogus", "ignored"),
+       dedit(6, 1, [], "scope", "Scope", "What it covers."),
+       dedit(7, 2, [], "net", "Network", "None.", after="scope"),
+       dedit(8, 3, ids(c, 7), "net", "Network", "Only localhost.", who="sage"),
+       dedit(9, 3, ids(c, 7), "net", "Network", "Only the registry.", who="ada"),
+       dset(10, 4, "status", "decided"),
+       event(c, 11, "chat.msg", 5, [], [("from", "kira"), ("in", "policy-talk"), ("doc", "policy"), ("sec", "net")], "Which one?"),
+       event(c, 12, "chat.msg", 6, [eid(c, 11)], [("from", "colin"), ("in", "policy-talk"), ("re", eid(c, 11)), ("resolve", "yes")], "the registry"),
+       event(c, 13, "chat.msg", 7, [], [("from", "kira"), ("in", "policy-talk"), ("sec", "net")], "a comment on the branch's own section"),
+       event(c, 14, "chat.set", 0, [], [("from", "colin"), ("branch", "old-policy"), ("key", "doc")], "Old policy"),
+       event(c, 15, "chat.set", 0, [], [("from", "colin"), ("branch", "old-policy"), ("key", "doc-moved")], "policy"),
+       event(c, 16, "chat.set", 0, [], [("from", "colin"), ("branch", "other"), ("key", "doc")], "Still here")]
+cases.append({"name": "doc-scope", "about": "a document in scope doc/<D>: doc.set keys (newest wins, unknown keys ignored), doc.edit as chat.edit, comments with a doc header; a branch whose doc moved is no longer listed",
+  "events": evs,
+  "expect": {"docs": [["doc/policy", "Permissions policy", "decided"], ["other", "Still here", "draft"]],
+             "sections": {D: [["scope", ids(c, 6), False], ["net", ids(c, 9, 8), False]]},
+             "edits": {eid(c, 8): {"b": D, "sec": "net", "from": "sage", "title": "Network", "after": "", "text": "Only localhost."}},
+             "history": {D: {"net": ids(c, 7, 8, 9)}},
+             "comments": {D: {"net": ids(c, 11)}, "policy-talk": {"net": ids(c, 13)}},
+             "resolved": {eid(c, 11): "yes"}}})
+
 for i, case in enumerate(cases, 1):
     (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")

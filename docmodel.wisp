@@ -13,6 +13,9 @@
 ;   <dir>/d/<b>/s/<sec>/first       "<time> <id>" of its earliest edit; place: that edit's after
 ;   <dir>/d/<b>/c/<sec>             comment ids, in arrival order
 ;   <dir>/r/<root>                  "yes" or "no"; rt/<root> is "<time> <id>" of that reply
+;   <dir>/ds/<D>/<key>              a document in scope doc/<D> (field/SPEC-group.md 6): its
+;                                   doc.set values; st/<key> is "<time> <id>" of the set
+; A document is named by its branch, or doc/<D> for one in its own scope.
 (module docmodel
   (provide doc-add doc-list doc-sections doc-edit doc-history doc-comments doc-resolved doc-start)
   (require list "std/list.wisp")
@@ -49,25 +52,44 @@
 
   (define doc-start (lambda (dir)
     (begin (chat-start dir)
-           (fs-mkdir (string-append dir "/e")) (fs-mkdir (string-append dir "/d"))
+           (fs-mkdir (string-append dir "/e")) (fs-mkdir (string-append dir "/d")) (fs-mkdir (string-append dir "/d/doc"))
+           (fs-mkdir (string-append dir "/ds"))
            (fs-mkdir (string-append dir "/r")) (fs-mkdir (string-append dir "/rt")) dir)))
   (define doc-dir (lambda (dir b)
     (begin (fs-mkdir (dpath dir b)) (fs-mkdir (string-append (dpath dir b) "/s"))
            (fs-mkdir (string-append (dpath dir b) "/c")) b)))
 
   ; ── adding one event (2) ──────────────────────────────────────────────
+  (define has-prefix (lambda (s p)
+    (if (< (string-len s) (string-len p)) 0 (if (string=? (substring s 0 (string-len p)) p) 1 0))))
   (define doc-add (lambda (dir id scope kind text)
-    (if (not (string=? scope "chat/main")) ""
-      (let (c (chat-canon text))
-        (let (h (chat-headers (list-get c 2)))
-          (let (hdr (lambda (k) (chat-hdr (list-get h 0) k)))
-            (if (string=? kind "chat.edit") (add-edit dir id c hdr (list-get h 1))
-              (if (string=? kind "chat.msg") (add-msg dir id c hdr) ""))))))))
+    (let (c (chat-canon text))
+      (let (h (chat-headers (list-get c 2)))
+        (let (hdr (lambda (k) (chat-hdr (list-get h 0) k)))
+          (if (string=? scope "chat/main")
+            (if (string=? kind "chat.edit") (if (= (chat-name? (hdr "in")) 1) (add-edit dir id c hdr (list-get h 1) (hdr "in")) "")
+              (if (string=? kind "chat.msg") (add-msg dir id c hdr) ""))
+            (if (and (= (has-prefix scope "doc/") 1) (= (chat-name? (rest-of scope 4)) 1))
+              (if (string=? kind "doc.edit") (add-edit dir id c hdr (list-get h 1) scope)
+                (if (string=? kind "doc.set") (add-set dir id c hdr (rest-of scope 4) (list-get h 1)) ""))
+              "")))))))
 
-  (define add-edit (lambda (dir id c hdr text)
-    (let (b (hdr "in"))
+  ; doc.set: title, status, group or branch; the newest (time, id) wins
+  (define add-set (lambda (dir id c hdr d v)
+    (let (k (hdr "key"))
+      (if (not (in? k (list "title" "status" "group" "branch"))) ""
+        (let (st (string-append dir "/ds/" d "/st"))
+          (begin
+            (fs-mkdir (string-append dir "/ds/" d)) (fs-mkdir st)
+            (if (= (chat-newer (list-get c 0) id (read-or (string-append st "/" k) "")) 1)
+              (begin (fs-write (string-append dir "/ds/" d "/" k) v)
+                     (fs-write (string-append st "/" k) (string-append (list-get c 0) " " id)) id)
+              "")))))))
+
+  (define add-edit (lambda (dir id c hdr text b)
+    (begin
       (let (s (hdr "sec"))
-        (if (or (= (chat-name? b) 0) (= (chat-name? s) 0) (= (fs-exists-1 (epath dir id)) 1)) ""
+        (if (or (= (chat-name? s) 0) (= (fs-exists-1 (epath dir id)) 1)) ""
           (let (who (if (string=? (hdr "from") "") "?" (hdr "from")))
             (let (t (list-get c 0))
               (begin
@@ -95,7 +117,9 @@
             (if (string=? re "")
               (let (s (hdr "sec"))
                 (if (= (chat-name? s) 0) ""
-                  (begin (doc-dir dir b) (fs-append (cpath dir b s) (string-append id "\n")) id)))
+                  ; on a document in doc/<D> with a doc header (SPEC-group 6), else on the branch's own
+                  (let (key (if (= (chat-name? (hdr "doc")) 1) (string-append "doc/" (hdr "doc")) b))
+                    (begin (doc-dir dir key) (fs-append (cpath dir key s) (string-append id "\n")) id))))
               (let (v (hdr "resolve"))
                 (if (or (string=? v "yes") (string=? v "no"))
                   (let (t (list-get c 0))
@@ -125,13 +149,22 @@
   (define stamp-gt (lambda (a b)
     (let (w (words a)) (if (string=? a b) (= 0 1) (= (chat-newer (list-get w 0) (list-get w 1) b) 1)))))
 
-  ; (list (title status) ...) for each document, by branch: (list b title status)
+  ; every document, by name: (list name title status). A branch whose doc
+  ; moved (state doc-moved) is listed as its new one only.
   (define doc-list (lambda (dir)
-    (filter (lambda (d) (< 0 (string-len (list-get d 1))))
-      (map (lambda (b)
-             (let (st (read-or (string-append dir "/b/" b "/state/doc-status") ""))
-               (list b (read-or (string-append dir "/b/" b "/state/doc") "") (if (string=? st "") "draft" st))))
-           (sort chat-str-lt (dir-names (string-append dir "/b")))))))
+    (sort (lambda (x y) (chat-str-lt (car x) (car y)))
+      (filter (lambda (d) (< 0 (string-len (list-get d 1))))
+        (append
+          (map (lambda (b)
+                 (let (st (read-or (string-append dir "/b/" b "/state/doc-status") ""))
+                   (list b (if (string=? (read-or (string-append dir "/b/" b "/state/doc-moved") "") "")
+                             (read-or (string-append dir "/b/" b "/state/doc") "") "")
+                         (if (string=? st "") "draft" st))))
+               (dir-names (string-append dir "/b")))
+          (map (lambda (d)
+                 (let (st (read-or (string-append dir "/ds/" d "/status") ""))
+                   (list (string-append "doc/" d) (read-or (string-append dir "/ds/" d "/title") "") (if (string=? st "") "draft" st))))
+               (dir-names (string-append dir "/ds"))))))))
 
   ; a section's heads, newest first
   (define heads (lambda (dir b s)

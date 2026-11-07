@@ -69,7 +69,12 @@ one. For readers that don't know groups, writers also send `chat.join` and
 
 ## Documents
 
-A branch whose state has `doc` (its title) is a document: sections that
+A new document lives in its own scope, `doc/<D>` (field/SPEC-group.md 6),
+with a group and a discussion branch: `lib/chat ME doc-new D TITLE`, or "New
+document" at /today/docs. Its sections are `doc.edit` events and its title
+and status `doc.set`; comments are posts in the discussion branch with `doc
+D` and `sec`. Before ticket 0074 a document was a branch: one whose state has
+`doc` (its title), with sections that
 people edit (`chat.edit`, one head per section, or several when two edits
 fork it), comments on a section (a post with a `sec` header) and resolving
 them (a reply with `resolve yes`). Every edit is kept. field/SPEC-doc.md;

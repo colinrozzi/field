@@ -11,6 +11,12 @@ like any chat event. Readers: `field/docmodel.wisp` (with the vectors in
 `field/vectors/doc/`), `lib/chat` (the `doc` verbs) and `site/public/chat.js`
 (`/today/docs`).
 
+**Since ticket 0074** a new document lives in its own scope, `doc/<D>`, with a
+group and a discussion branch (field/SPEC-group.md 6): `doc.set` instead of
+the branch's `doc` keys, `doc.edit` instead of `chat.edit` (the same model,
+the document taken from the scope), and comments in the discussion branch
+with a `doc D` header. The documents below, in a branch, stay readable.
+
 MUST, SHOULD and MAY are as in RFC 2119. Names are SPEC-chat 5.1's.
 
 ## 1. Events

@@ -10,12 +10,12 @@ field/docmodel.wisp; `lib/chat-vectors doc` checks lib/chat.
 
 | key | meaning |
 |---|---|
-| `docs` | the complete list of `[branch, title, status]`, by branch |
-| `sections` | `{branch: [[sec, heads, removed], ...]}`: the document's sections in order, each with its heads (newest first) and whether it is removed |
+| `docs` | the complete list of `[name, title, status]`, by name: a branch, or `doc/<D>` for a document in its own scope (field/SPEC-group.md 6) |
+| `sections` | `{name: [[sec, heads, removed], ...]}`: the document's sections in order, each with its heads (newest first) and whether it is removed |
 | `edits` | `{id: {field: value}}`. Fields: `b`, `sec`, `from`, `title`, `after`, `text` |
 | `no_edits` | ids that must not be edits |
-| `history` | `{branch: {sec: [ids]}}`, in arrival order |
-| `comments` | `{branch: {sec: [ids]}}`, in arrival order |
+| `history` | `{name: {sec: [ids]}}`, in arrival order |
+| `comments` | `{name: {sec: [ids]}}`, in arrival order |
 | `resolved` | `{root id: "yes", "no" or ""}` |
 
 Compare everything exactly, lists in order.
