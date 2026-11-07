@@ -91,6 +91,7 @@ and writes as `from colin` through node-chat:
 | `edit` | the section | `<after or ->\n<title>\n<text>` (title at most 200 bytes) | one `chat.edit` (field/SPEC-doc.md); the parents are the heads the editor opened on |
 | `comment` | the section | the text (non-empty) | one `chat.msg` with `sec` |
 | `resolve` | the comment (64 hex) | `yes` or `no`, LF, then the text (`resolved`/`reopened` if empty) | one `chat.msg`, a reply with `resolve` |
+| `read` | the newest event colin has opened (64 hex); branch `colin` | empty | one `mail.read` in `mail/colin` (field/SPEC-mailbox.md 3) |
 
 `<branch>` must be 1 to 64 bytes of `a-z 0-9 . _ -`. Each parent, the reply
 root and the anchor must be 64 lowercase hex. Anything else is `400 Bad

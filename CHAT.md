@@ -90,7 +90,11 @@ store nothing.
 ## colin's browser
 
 `/today/chat` on colinrozzi.com, behind the login. Branches on the left,
-with unread counts (`@` when one names you) and a form for a new one; under
+with unread counts (`@` when one names you) and a form for a new one; the
+total on the Branches button is colin's mailbox (field/SPEC-mailbox.md):
+what reaches him and he has not opened, on any device (the field's
+`mail.read` mark), and Recent lists, under "For you", events whose `to`
+names him that are not chat messages. Under
 them the live tickets (open, assigned, review). The branch in the middle:
 each message shows its replies as "N replies" (or a quiet "Reply" on hover)
 and opens its thread in a panel on the right (`/today/chat/B/t/ID`), where
