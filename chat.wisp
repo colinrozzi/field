@@ -6,7 +6,8 @@
 ;   post <len>\n<thread>\n<kind>\n<body>   -> "ok <len>\n<id>" or "err <len>\n<why>"
 ;   send <len>\n<thread>\n<kind>\n<parent ids, space-separated, or ->\n<body>
 ;
-; kind is chat.msg, chat.join, chat.leave, chat.branch or chat.set; the event's scope is chat/<thread>.
+; kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit, and the event's
+; scope is chat/<thread>; or mail.read (field/SPEC-mailbox.md), and <thread> is its scope, mail/<name>.
 ; Bytes so far wait in field/chat-conn/<cid>, as a request can arrive in pieces.
 (module chat
   (provide chat-connection chat-data chat-closed chat-serve)
@@ -34,7 +35,11 @@
     (string-append word " " (num->str (string-len payload)) "\n" payload)))
 
   (define kind-ok? (lambda (k)
-    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit") string=?)))
+    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read") string=?)))
+
+  ; a read mark's scope (field/SPEC-mailbox.md 3)
+  (define mail-scope? (lambda (t)
+    (if (< (string-len t) 6) 0 (if (string=? (substring t 0 5) "mail/") 1 0))))
 
   (define parent-list (lambda (line)
     (if (string=? line "-") (list)
@@ -49,13 +54,14 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit or mail.read")
+                  (if (and (string=? kind "mail.read") (not (mail-scope? thread))) (reply "err" "mail.read goes in mail/<name>")
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
-                    (let (r (field-post-to FIELD "chat" (string-append "chat/" thread) kind
+                    (let (r (field-post-to FIELD "chat" (if (string=? kind "mail.read") thread (string-append "chat/" thread)) kind
                                         (substring p (+ k 1) (string-len p))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
-                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r))))))))))))))
+                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))))
 
   ; Handle every complete request in buf -> what's left.
   (define drain (lambda (cid buf)

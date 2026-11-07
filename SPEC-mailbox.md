@@ -1,7 +1,7 @@
 # The mailbox: specification
 
-Status: draft, ticket 0073, 2026-11-07 (ada). Step 1 of the design document
-`identity-groups-mailbox`. For tova to review before anything is built.
+Status: ticket 0073, 2026-11-07 (ada; agreed with tova in the ticket's
+branch). Step 1 of the design document `identity-groups-mailbox`.
 
 A **mailbox** is a view, not new events: for each name, the events in any
 scope that are addressed to it, in the reader's arrival order, plus a read
@@ -65,15 +65,22 @@ Marks are events, so every device and every reader agrees:
 |---|---|---|
 | `mail.read` | `mail/<name>` | `from <name>\nupto <event id>\n` |
 
-A reader's mark for `N` is the newest `mail.read` in `mail/N` (by `(time,
-id)`) whose `upto` it has itself received and that lies later in its
-arrival order than the current mark. One whose `upto` has not arrived yet
-waits until it does. (A mark from another device whose node is ahead never
-marks read what this reader has not shown.)
+A reader's mark for `N` is the `upto`, among the `mail.read` events in
+`mail/N` whose `from` is `N`, that comes latest in its own arrival order. One
+whose `upto` has not arrived yet waits until it does. (A mark from another
+device whose node is ahead never marks read what this reader has not shown.)
 
-Writers: write a `mail.read` when the person has seen the events, naming
-the newest addressed event seen; one per wake, not one per event. A client
-MAY keep a faster local mark and write events less often.
+Writers: marks live in the field forever (and in the browser's snapshot),
+so write few. A reader keeps a **local mark** (the one `wait` uses) and
+writes a `mail.read` for a name at most once every 10 minutes, naming its
+local mark, and when it exits if it can. The browser writes when colin
+opens things, debounced the same way. A local mark is never behind the
+field's mark.
+
+**Known limit.** Arrival order differs between machines: machine A can
+mark read, up to `upto`, an event that machine B received before `upto` but
+A received after it and never showed. Fine for step 1; a later fix could be
+a set of ids or a mark per scope.
 
 Moving from chat: a reader starting with no `mail.read` for `N` takes chat's
 `read[N]` (lib/chat's index: the message with that seq) as its first mark,
@@ -84,7 +91,7 @@ so `lib/chat unread` and an old `lib/chat wait` agree with it.
 ## 4. What wait prints
 
 `lib/mail NAME wait` blocks until `N` has unread events, prints them oldest
-first, then writes the mark. Output for a `chat.msg` is exactly what `lib/chat
+first, then moves the local mark (section 3). Output for a `chat.msg` is exactly what `lib/chat
 wait` prints today (`chat <branch> HH:MM <who> [<id8>]: <text>`, ` re
 [<id8>]` for a reply, continuation lines indented, then the one hint line),
 so agents see no change. Any other event prints as
@@ -106,8 +113,10 @@ today.
   browser). Opening a branch or thread writes `mail.read` up to the newest
   addressed event before which everything has been opened.
 - **push** (phone): `push.wisp` pushes each event newly addressed to colin
-  (mailmodel instead of `chat-reaches`); a chat message's payload stays the
-  same; others get `{title: "<from>: <kind>", body: text, url: /today}`.
+  (mailmodel instead of `chat-reaches`), but only a `chat.msg` or an event
+  addressed by an explicit `to`, so a busy kind that later gets a rule
+  cannot flood the phone. A chat message's payload stays the same; others
+  get `{title: "<from>: <kind>", body: text, url: /today}`.
 
 ## 6. Readers
 
@@ -115,12 +124,15 @@ today.
   push.wisp; follows every scope with the chat model inside.
 - `lib/mail`: Python, for wait and unread; its own index in `run/mail/`
   (its own lock and version guard, as lib/chat's section 8 learned), so the
-  chat index is not migrated.
+  chat index is not migrated. It keeps lib/chat's model inside, and reads it
+  again from the start when lib/chat's READS changes. `lib/mail-vectors`
+  checks it.
 - `site/public/chat.js`: the badge and mark.
 
 Posting `mail.read`: node-chat (field/chat.wisp) also accepts kind
 `mail.read` in scope `mail/<name>`, signed with the chat key like every chat
-event, until identities give each name its own key.
+event, until identities give each name its own key. A node's rules
+(SPEC-node 5) must open `mail/` to the chat keys.
 
 ## 7. Conformance
 

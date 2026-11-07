@@ -76,10 +76,11 @@ policy, branch `theater-permissions` (ticket 0068).
 `wait`, `unread`. Message ids print as 8 hex characters, which is enough to
 reply.
 
-`lib/wait-message` waits on chat too, as the session's name (or
-`CHAT_NAME`): one monitor wakes you for a REPL message or a chat message,
-whichever comes first. Both cursors move only after printing, so nothing is
-lost when one wait is stopped for the other.
+`lib/wait-message` waits on your mailbox too (`lib/mail`,
+field/SPEC-mailbox.md), as the session's name (or `CHAT_NAME`): one monitor
+wakes you for a REPL message, a chat message that reaches you, or any event
+whose `to` names you, whichever comes first. Both cursors move only after
+printing, so nothing is lost when one wait is stopped for the other.
 
 The index (`run/chat/index.json` on the desktop, `state/chat/` on server3)
 is a reading of the field. Delete it and the next call rebuilds it. Calls

@@ -273,7 +273,9 @@ make the target a parent, so on any node it arrives first.
 - **Reaches**: a message reaches name `N` when its `from` is not `N` and
   one of: `N` is in its branch's members; it is a reply and `N` is in its
   thread's people; its text matches `(^|[^A-Za-z0-9_@])@N\b` (Divergences
-  3).
+  3). Delivery (wake, unread, push) uses this as the
+  `chat.msg` rule of the mailbox, decided when the message arrives
+  (field/SPEC-mailbox.md 2).
 
 ## 7. Tickets
 

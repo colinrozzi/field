@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Check field/mailmodel.wisp against the mailbox vectors (README.md here).
+
+    field/vectors/mail/run [CASE.json ...]
+
+Uses field/vectors/chat/run's private daemon (its own port and filesystem
+root; nothing touches the real node), feeds each event to mail-add, and asks
+the model for each fact in `expect`.
+"""
+import importlib.machinery, importlib.util, json, sys
+
+sys.dont_write_bytecode = True
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+_loader = importlib.machinery.SourceFileLoader("chatrun", str(HERE.parent / "chat" / "run"))
+_spec = importlib.util.spec_from_loader("chatrun", _loader)
+chatrun = importlib.util.module_from_spec(_spec)
+_loader.exec_module(chatrun)
+wstr, lst, canon = chatrun.wstr, chatrun.lst, chatrun.canon
+
+
+def check(d, case):
+    dirn = wstr("mv-" + case["name"])
+    d.eval(f'(mail-start {dirn})')
+    addressed = {}
+    for id_, scope, kind, text in case["events"]:
+        out = d.eval(f'(join-l (mail-add {dirn} {wstr(id_)} {wstr(scope)} {wstr(kind)} {wstr(canon(text))}))')
+        addressed[id_] = sorted(lst(out))
+    fails = []
+    exp = case["expect"]
+    for id_, want in exp.get("addressed", {}).items():
+        if addressed.get(id_) != sorted(want):
+            fails.append(f"addressed ..{id_[-2:]}: {addressed.get(id_)!r} != {sorted(want)!r}")
+    for what, form in (("box", '(join-l (mail-box {d} {n}))'), ("unread", '(join-l (mail-unread {d} {n} ""))')):
+        for name, want in exp.get(what, {}).items():
+            got = lst(d.eval(form.format(d=dirn, n=wstr(name))))
+            if got != want:
+                fails.append(f"{what} {name}: {got!r} != {want!r}")
+    for name, want in exp.get("mark", {}).items():
+        got = d.eval(f'(mail-mark {dirn} {wstr(name)})')
+        if got != want:
+            fails.append(f"mark {name}: {got!r} != {want!r}")
+    return fails
+
+
+def main():
+    files = [Path(a) for a in sys.argv[1:]] or sorted(HERE.glob("*.json"))
+    bad = 0
+    with chatrun.Daemon() as d:
+        d.eval(chatrun.JOIN)
+        d.eval('(require mailmodel "experiment/field/mailmodel.wisp")')
+        for f in files:
+            case = json.loads(f.read_text())
+            try:
+                fails = check(d, case)
+            except RuntimeError as e:
+                fails = [f"error: {e}"]
+            print(("ok   " if not fails else "FAIL ") + f.name)
+            for x in fails:
+                print("     " + x)
+            bad += bool(fails)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()

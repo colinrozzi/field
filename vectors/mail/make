@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Write the mailbox vectors (README.md here) from the cases below.
+
+    field/vectors/mail/make
+
+Each case is a list of events and what must hold after reading them in
+that order.
+"""
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+AUTHOR = "c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20"
+T0 = 1793541600000
+
+
+def eid(case, n):
+    return f"e{case}" + "0" * (62 - len(str(n))) + str(n)
+
+
+def event(case, n, kind, t, headers, text=None, scope="chat/main", parents=()):
+    body = "".join(f"{k} {v}\n" for k, v in headers) + ("" if text is None else "\n" + text)
+    lines = ["sig " + "0" * 128, "field 1", "author " + AUTHOR, "scope " + scope, "kind " + kind,
+             f"time {T0 + t * 1000}"] + [f"parent {p}" for p in sorted(parents)]
+    lines.append(f"body {len(body.encode())}")
+    return [eid(case, n), scope, kind, "\n".join(lines) + "\n" + body]
+
+
+def join(case, n, b, who):
+    return event(case, n, "chat.join", n, [("from", who), ("branch", b), ("who", who)])
+
+
+def post(case, n, b, who, text, to=None, re=None):
+    hs = [("from", who), ("in", b)] + ([("re", eid(case, re))] if re else []) + ([("to", to)] if to else [])
+    return event(case, n, "chat.msg", n, hs, text, parents=[eid(case, re)] if re else [])
+
+
+def read(case, n, who, upto, scope=None):
+    return event(case, n, "mail.read", n, [("from", who), ("upto", upto)], scope=scope or f"mail/{who}")
+
+
+def ids(case, *ns):
+    return [eid(case, n) for n in ns]
+
+
+cases = []
+
+# 1: chat's rule
+c = 1
+evs = [join(c, 1, "general", "tova"), join(c, 2, "general", "sage"),
+       post(c, 3, "general", "tova", "hello"),
+       post(c, 4, "general", "sage", "a question for @ada"),
+       post(c, 5, "other", "kira", "elsewhere"),
+       post(c, 6, "other", "ada", "me too", re=5),
+       post(c, 7, "other", "kira", "thanks", re=5)]
+cases.append({"name": "chat-rule", "about": "a chat.msg reaches its branch's members, a reply also its thread's people, and @names; never its sender",
+  "events": evs,
+  "expect": {"addressed": {eid(c, 1): [], eid(c, 3): ["sage"], eid(c, 4): ["ada", "tova"], eid(c, 5): [],
+                           eid(c, 6): ["kira"], eid(c, 7): ["ada"]},
+             "box": {"tova": ids(c, 4), "sage": ids(c, 3), "ada": ids(c, 4, 7), "kira": ids(c, 6), "colin": []}}})
+
+# 2: to, on any scope
+c = 2
+evs = [event(c, 1, "ops.fail", 1, [("from", "ops"), ("to", "colin tova ops Bad-Name")], "check failed", scope="ops/checks"),
+       event(c, 2, "ops.fail", 2, [("from", "ops"), ("to", "colin")], "ignored", scope="field/checks"),
+       event(c, 3, "chat.set", 3, [("from", "tova"), ("branch", "general"), ("key", "status"), ("to", "sage")], "open"),
+       join(c, 4, "general", "sage"),
+       post(c, 5, "general", "tova", "for you", to="sage kira"),
+       event(c, 6, "ops.note", 6, [], "no headers at all", scope="ops/checks")]
+cases.append({"name": "to", "about": "a to header addresses any event outside field/; words that are not names and the sender are dropped; to and the chat rule together give each name once",
+  "events": evs,
+  "expect": {"addressed": {eid(c, 1): ["colin", "tova"], eid(c, 2): [], eid(c, 3): ["sage"], eid(c, 5): ["kira", "sage"], eid(c, 6): []},
+             "box": {"colin": ids(c, 1), "tova": ids(c, 1), "sage": ids(c, 3, 5), "kira": ids(c, 5), "ops": []}}})
+
+# 3: addressed on arrival
+c = 3
+evs = [join(c, 1, "general", "tova"), post(c, 2, "general", "tova", "before"),
+       join(c, 3, "general", "sage"), post(c, 4, "general", "tova", "after")]
+cases.append({"name": "arrival", "about": "addressing is decided on arrival: joining a branch does not deliver its history",
+  "events": evs,
+  "expect": {"box": {"sage": ids(c, 4)}}})
+
+# 4: the read mark
+c = 4
+evs = [join(c, 1, "general", "ada"), post(c, 2, "general", "tova", "one"), post(c, 3, "general", "tova", "two"),
+       read(c, 4, "ada", eid(c, 2)), post(c, 5, "general", "tova", "three")]
+cases.append({"name": "mark", "about": "a mail.read marks read what arrived at or before its upto",
+  "events": evs,
+  "expect": {"mark": {"ada": eid(c, 2), "tova": ""}, "unread": {"ada": ids(c, 3, 5)}}})
+evs = evs + [read(c, 6, "ada", eid(c, 5)), read(c, 7, "ada", eid(c, 3)),
+             read(c, 8, "tova", eid(c, 5), scope="mail/ada"), read(c, 9, "ada", eid(c, 5), scope="mail/tova")]
+cases.append({"name": "mark-forward", "about": "a mark only moves forward; a mail.read whose from is not its scope's name is ignored",
+  "events": evs,
+  "expect": {"mark": {"ada": eid(c, 5), "tova": ""}, "unread": {"ada": []}}})
+
+# 5: a mark that arrives before its upto
+c = 5
+evs = [join(c, 1, "general", "ada"), post(c, 2, "general", "tova", "one"),
+       read(c, 3, "ada", eid(c, 4))]
+cases.append({"name": "mark-early", "about": "a mail.read whose upto has not arrived waits",
+  "events": evs,
+  "expect": {"mark": {"ada": ""}, "unread": {"ada": ids(c, 2)}}})
+evs = evs + [post(c, 4, "general", "tova", "two"), post(c, 5, "general", "tova", "three")]
+cases.append({"name": "mark-arrives", "about": "when the upto arrives the mark moves to it",
+  "events": evs,
+  "expect": {"mark": {"ada": eid(c, 4)}, "unread": {"ada": ids(c, 5)}}})
+
+# 6: @names
+c = 6
+evs = [post(c, 1, "general", "tova", "@ada. and @sage_x, not x@kira or @@jo; @Bob @tova"),
+       post(c, 2, "general", "tova", "@a.b-c")]
+cases.append({"name": "mentions", "about": "@names follow chat's mention rule (SPEC-chat 6); the sender is dropped",
+  "events": evs,
+  "expect": {"addressed": {eid(c, 1): ["ada", "sage_x"], eid(c, 2): ["a", "a.", "a.b", "a.b-", "a.b-c"]}}})
+
+for i, case in enumerate(cases, 1):
+    (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")
+print(len(cases), "cases")
