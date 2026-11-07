@@ -86,7 +86,11 @@ and writes as `from colin` through node-chat:
 |---|---|---|---|
 | `msg` | the root replied to, or `-` | the text (non-empty) | one `chat.msg` |
 | `branch` | the anchor, or `-` | members, space-separated | one `chat.branch`, then a `chat.join` for `colin` and for each member |
-| `set` | MUST be `status` | one of `open`, `assigned`, `review`, `done` | one `chat.set` |
+| `set` | `status`, `doc-status` or `doc` | for `status` one of `open`, `assigned`, `review`, `done`; for `doc-status` `draft` or `decided`; for `doc` a title (one line, 1 to 200 bytes) | one `chat.set` |
+| `doc` | `-` | a title, then optionally LF and members | `chat.set` `doc` and `doc-status` = `draft`, then a `chat.join` for `colin` and each member |
+| `edit` | the section | `<after or ->\n<title>\n<text>` (title at most 200 bytes) | one `chat.edit` (field/SPEC-doc.md); the parents are the heads the editor opened on |
+| `comment` | the section | the text (non-empty) | one `chat.msg` with `sec` |
+| `resolve` | the comment (64 hex) | `yes` or `no`, LF, then the text (`resolved`/`reopened` if empty) | one `chat.msg`, a reply with `resolve` |
 
 `<branch>` must be 1 to 64 bytes of `a-z 0-9 . _ -`. Each parent, the reply
 root and the anchor must be 64 lowercase hex. Anything else is `400 Bad

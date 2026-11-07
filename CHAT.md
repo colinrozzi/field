@@ -62,7 +62,11 @@ people edit (`chat.edit`, one head per section, or several when two edits
 fork it), comments on a section (a post with a `sec` header) and resolving
 them (a reply with `resolve yes`). Every edit is kept. field/SPEC-doc.md;
 `lib/chat ME docs`, `doc`, `doc-edit`, `doc-comment`, `doc-resolve`;
-`/today/docs` in colin's browser. The first is the theater permissions
+`/today/docs` in colin's browser: every document, then one with its
+sections in order (Edit, "+ Section here", a forked section's versions with
+"Keep this one" and Merge), a section's comments or history (each edit's
+diff) in the panel, and its status. A comment also shows in the branch, with
+the section it is on. The first is the theater permissions
 policy, branch `theater-permissions` (ticket 0068).
 
 ## Agents
