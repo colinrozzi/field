@@ -1,7 +1,9 @@
 ; chat.wisp — post chat events into this machine's field store (see
 ; field/CHAT.md). lib/chat is the client; this signs, since keys stay in the
-; daemon. Every chat event is signed with the "chat" key; who wrote it is the
-; body's first line, "from NAME" (over-permissive on purpose, for now).
+; daemon. Who wrote an event is the body's first line, "from NAME"; it is
+; signed with NAME's key id.NAME if this daemon holds one (field/SPEC-id.md),
+; else with the "chat" key. Anyone who can reach this port can write as any
+; name whose key is here: the trust is this machine's.
 ;
 ;   post <len>\n<thread>\n<kind>\n<body>   -> "ok <len>\n<id>" or "err <len>\n<why>"
 ;   send <len>\n<thread>\n<kind>\n<parent ids, space-separated, or ->\n<body>
@@ -49,9 +51,21 @@
       (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "group.")) "group/"
         (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/"
           (if (and (< 3 (string-len k)) (string=? (substring k 0 3) "id.")) "id/" ""))))))
-  ; id.* is signed by the registrar, this node's own key; the rest by "chat"
-  (define signer (lambda (kind)
-    (if (string=? (scope-for kind) "id/") (match (fs-read-text "field/node") ((ok n) n) ((err e) "no-node-name")) "chat")))
+  ; id.* is signed by the registrar, this node's own key. The rest by the
+  ; key of the body's `from`, id.<from>, if this daemon holds it
+  ; (field/SPEC-id.md 5), else by "chat" (until rules step C).
+  (define signer (lambda (kind body)
+    (if (string=? (scope-for kind) "id/") (match (fs-read-text "field/node") ((ok n) n) ((err e) "no-node-name"))
+      (let (from (from-of body))
+        (if (string=? from "") "chat"
+          (match (key-public (string-append "id." from)) ((ok p) (string-append "id." from)) ((err e) "chat")))))))
+  ; the body's `from` header: its first line, "from NAME"
+  (define from-of (lambda (body)
+    (let (j (string-index body b-nl 0))
+      (let (line (if (< j 0) body (substring body 0 j)))
+        (if (and (< 5 (string-len line)) (string=? (substring line 0 5) "from ")
+                 (< (string-index line b-space 5) 0) (< (string-index line (string-ref "/" 0) 0) 0))
+          (substring line 5 (string-len line)) "")))))
   ; "key new" in an id.key: the name's own key id.<name>, made here if missing
   (define id-body (lambda (kind thread body)
       (if (or (not (string=? kind "id.key")) (< (string-len thread) 4)) body
@@ -86,7 +100,7 @@
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
-                    (let (r (field-post-to FIELD (signer kind) (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
+                    (let (r (field-post-to FIELD (signer kind (substring p (+ k 1) (string-len p))) (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
                                         (id-body kind thread (substring p (+ k 1) (string-len p)))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
