@@ -41,7 +41,9 @@ not allowed is ignored. One is allowed if:
    with role `read` or `write`, or a `group.remove` of `from` itself.
 
 Even when allowed, an event is ignored if it would leave the group with no
-direct `admin` member. A group always has an admin.
+`admin` among its effective members (section 3). A group always has an
+admin. A group's very first event still makes its writer admin, even if the
+rest of that event is ignored this way.
 
 `from` is a body header, not checked against a key until identities (step 3).
 
@@ -54,12 +56,13 @@ nothing is enforced; access (later) will need a better rule.
 ## 3. Members, through nesting
 
 The **effective members** of `G` are a role for each name, worked out by
-walking from `G` with a set of groups already visited:
+walking from `G`:
 
 - A direct member that is a name `N` with role `R` gives `N: R`.
 - A direct member `group/H` with role `R` gives every effective member
-  `N: R2` of `H` as `N: min(R, R2)`, unless `H` was already visited. A group
-  already visited adds nothing, so a cycle adds nothing.
+  `N: R2` of `H` as `N: min(R, R2)`, unless `H` is already on the path from
+  `G` to here. Such a group adds nothing, so a cycle adds nothing. A group
+  reached by two paths counts through each.
 - A name reached more than once takes the highest role.
 
 An unknown or empty `H` adds nothing.

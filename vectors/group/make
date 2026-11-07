@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Write the group vectors (README.md here) from the cases below.
+
+    field/vectors/group/make
+"""
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+AUTHOR = "c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20"
+T0 = 1793541600000
+
+
+def eid(case, n):
+    return f"f{case}" + "0" * (62 - len(str(n))) + str(n)
+
+
+def event(case, n, kind, headers, text=None, scope="chat/main", parents=()):
+    body = "".join(f"{k} {v}\n" for k, v in headers) + ("" if text is None else "\n" + text)
+    lines = ["sig " + "0" * 128, "field 1", "author " + AUTHOR, "scope " + scope, "kind " + kind,
+             f"time {T0 + n * 1000}"] + [f"parent {p}" for p in sorted(parents)]
+    lines.append(f"body {len(body.encode())}")
+    return [eid(case, n), scope, kind, "\n".join(lines) + "\n" + body]
+
+
+def add(case, n, g, frm, who, role=None):
+    return event(case, n, "group.add", [("from", frm), ("who", who)] + ([("role", role)] if role else []), scope=f"group/{g}")
+
+
+def rm(case, n, g, frm, who):
+    return event(case, n, "group.remove", [("from", frm), ("who", who)], scope=f"group/{g}")
+
+
+def opn(case, n, g, frm, v):
+    return event(case, n, "group.open", [("from", frm), ("open", v)], scope=f"group/{g}")
+
+
+cases = []
+
+c = 1
+cases.append({"name": "first-admin", "about": "the first event makes its writer admin; only admins change a group after that; group.add on a member changes its role",
+  "events": [add(c, 1, "g", "tova", "sage"), add(c, 2, "g", "sage", "kira"), add(c, 3, "g", "tova", "kira", "read"),
+             add(c, 4, "g", "tova", "sage", "admin"), rm(c, 5, "g", "sage", "tova"), add(c, 6, "g", "tova", "jo")],
+  "expect": {"direct": {"g": {"sage": "admin", "kira": "read"}}, "groups": {"g": {"sage": "admin", "kira": "read"}}, "open": {"g": False}}})
+
+c = 2
+cases.append({"name": "last-admin", "about": "a change that would leave no admin is ignored, even the first event's",
+  "events": [add(c, 1, "g", "ada", "ada", "write"), rm(c, 2, "g", "ada", "ada"), add(c, 3, "g", "ada", "bob", "admin"),
+             rm(c, 4, "g", "ada", "ada"), add(c, 5, "g", "bob", "bob", "read")],
+  "expect": {"direct": {"g": {"bob": "admin"}}}})
+
+c = 3
+cases.append({"name": "open", "about": "in an open group anyone may add (up to write) or remove themselves, and nobody else",
+  "events": [add(c, 1, "g", "tova", "tova", "admin"), opn(c, 2, "g", "sage", "yes"), opn(c, 3, "g", "tova", "yes"),
+             add(c, 4, "g", "sage", "sage"), add(c, 5, "g", "kira", "kira", "admin"), add(c, 6, "g", "sage", "kira"),
+             rm(c, 7, "g", "sage", "sage"), add(c, 8, "g", "jo", "jo", "read"), opn(c, 9, "g", "tova", "no"),
+             add(c, 10, "g", "lux", "lux"), rm(c, 11, "g", "jo", "jo")],
+  "expect": {"direct": {"g": {"tova": "admin", "jo": "read"}}, "open": {"g": False}}})
+
+c = 4
+cases.append({"name": "nesting", "about": "a nested group's members take the lower of the two roles; a name reached twice takes its highest; a cycle adds nothing",
+  "events": [add(c, 1, "team", "tova", "ada"), add(c, 2, "outer", "colin", "group/team", "read"), add(c, 3, "team", "tova", "group/outer"),
+             add(c, 4, "outer", "colin", "ada"), add(c, 5, "outer", "colin", "group/nobody")],
+  "expect": {"groups": {"outer": {"colin": "admin", "tova": "read", "ada": "write"},
+                        "team": {"tova": "admin", "ada": "write", "colin": "write"}}}})
+
+c = 5
+cases.append({"name": "admin-nested", "about": "an admin through a nested group may change the group",
+  "events": [add(c, 1, "admins", "tova", "tova", "admin"), add(c, 2, "outer", "colin", "group/admins", "admin"),
+             add(c, 3, "outer", "tova", "sage"), add(c, 4, "outer", "kira", "kira")],
+  "expect": {"groups": {"outer": {"colin": "admin", "tova": "admin", "sage": "write"}}}})
+
+c = 6
+evs = [add(c, 1, "gen", "tova", "sage"),
+       event(c, 2, "chat.branch", [("from", "tova"), ("name", "general")]),
+       event(c, 3, "chat.set", [("from", "tova"), ("branch", "general"), ("key", "group")], "gen"),
+       event(c, 4, "chat.join", [("from", "kira"), ("branch", "general"), ("who", "kira")]),
+       event(c, 5, "chat.join", [("from", "a"), ("branch", "old"), ("who", "a")]),
+       event(c, 6, "chat.join", [("from", "a"), ("branch", "old"), ("who", "b")]),
+       event(c, 7, "chat.msg", [("from", "c"), ("in", "old")], "hello"),
+       event(c, 8, "chat.msg", [("from", "sage"), ("in", "general")], "for the group"),
+       event(c, 9, "chat.msg", [("from", "kira"), ("in", "general")], "joined the old way"),
+       event(c, 10, "ops.fail", [("from", "ops"), ("to", "group/gen jo group/missing")], "check failed", scope="ops/x")]
+cases.append({"name": "branches", "about": "a branch with a group has the group's members (chat.join and posting no longer count); one without keeps chat's; to group/G reaches G's members",
+  "events": evs,
+  "expect": {"members": {"general": ["sage", "tova"], "old": ["a", "b", "c"]},
+             "addressed": {eid(c, 7): ["a", "b"], eid(c, 8): ["tova"], eid(c, 9): ["sage", "tova"], eid(c, 10): ["jo", "sage", "tova"]}}})
+
+c = 7
+cases.append({"name": "two-paths", "about": "a group reached by two paths counts through each (the path, not the whole walk, stops a cycle)",
+  "events": [add(c, 1, "team", "tova", "ada"), add(c, 2, "sub", "colin", "group/team", "admin"),
+             add(c, 3, "outer", "colin", "group/team", "read"), add(c, 4, "outer", "colin", "group/sub", "admin")],
+  "expect": {"groups": {"outer": {"colin": "admin", "tova": "admin", "ada": "write"}}}})
+
+for i, case in enumerate(cases, 1):
+    (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")
+print(len(cases), "cases")

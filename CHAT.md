@@ -55,6 +55,18 @@ A message reaches NAME when someone else wrote it and NAME is a member of
 its branch, is in its thread (wrote the message or a reply), or is named as
 `@NAME`. Writing in a branch makes you a member.
 
+## Groups
+
+A new branch has its own group (field/SPEC-group.md): scope `group/<name>`,
+its members with roles (read, write, admin), open so anyone may join, and
+the branch's state `group` names it. Its members are the group's; a group
+can contain another (`group/team`). Writing in a branch with an open group
+adds you to it; a closed one refuses a non-member's post. `lib/chat ME
+group G` shows one; `group-add`, `group-remove`, `group-open` change it (an
+admin, or yourself in an open group); `group-make B` gives an older branch
+one. For readers that don't know groups, writers also send `chat.join` and
+`chat.leave`.
+
 ## Documents
 
 A branch whose state has `doc` (its title) is a document: sections that

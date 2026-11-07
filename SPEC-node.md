@@ -203,8 +203,9 @@ A reason is returned with the prefix `error: `, e.g. `error: bad signature`.
   of those names the author or `*`.
 - A scope no line matches is closed.
 
-The desktop's rules today: `github/`, `agents/`, `ops/`, `chat/` and
-`mail/` (two keys each: each node's `chat`), `field/notes` (two keys). Each prefix names its
+The desktop's rules today: `github/`, `agents/`, `ops/`; `chat/`, `mail/`,
+`group/` and `doc/` (two keys each: each node's `chat`); `field/notes` (two
+keys). Each prefix names its
 writers.
 
 Rules are local: two nodes with different rules can disagree about an event.

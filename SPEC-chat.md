@@ -272,7 +272,8 @@ make the target a parent, so on any node it arrives first.
   `re`, in arrival order.
 - **Grown from**: the branches whose `anchor` is a message.
 - **Reaches**: a message reaches name `N` when its `from` is not `N` and
-  one of: `N` is in its branch's members; it is a reply and `N` is in its
+  one of: `N` is in its branch's members (its group's effective members if
+  its state has `group`, field/SPEC-group.md 5); it is a reply and `N` is in its
   thread's people; its text matches `(^|[^A-Za-z0-9_@])@N\b` (Divergences
   3). Delivery (wake, unread, push) uses this as the
   `chat.msg` rule of the mailbox, decided when the message arrives

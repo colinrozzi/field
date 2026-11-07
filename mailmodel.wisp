@@ -7,8 +7,10 @@
 ;   (mail-add dir id scope kind text)  text: the canonical text (no sig line)
 ;                                      -> the names it is addressed to, or (list)
 ;
-; and ask: mail-box, mail-unread, mail-mark; mail-to gives a text's `to`
-; names (push.wisp pushes only chat.msg or an explicit to). Under `dir`:
+; and ask: mail-box, mail-unread, mail-mark, mail-members (a branch's members,
+; its group's if it has one: field/SPEC-group.md 5); mail-to gives a text's
+; `to` names, a group/<g> word as its members (push.wisp pushes only chat.msg
+; or an explicit to). It keeps groups (groupmodel.wisp) in <dir>/group. Under `dir`:
 ;
 ;   <dir>/n                 events received so far (positions count from 1)
 ;   <dir>/p/<id>            that event's position
@@ -16,9 +18,10 @@
 ;   <dir>/mark/<name>       "<pos> <id>": the newest mail.read's upto (3)
 ;   <dir>/pend/<id>         names whose mail.read names id, not yet received
 (module mailmodel
-  (provide mail-add mail-box mail-unread mail-mark mail-to mail-start)
+  (provide mail-add mail-box mail-unread mail-mark mail-to mail-members mail-start)
   (require list "std/list.wisp")
   (require chatmodel "experiment/field/chatmodel.wisp")
+  (require groupmodel "experiment/field/groupmodel.wisp")
 
   (define b-nl (string-ref "\n" 0))
   (define b-space (string-ref " " 0))
@@ -50,15 +53,29 @@
   (define pos-of (lambda (dir id) (let (s (read-or (ppath dir id) "")) (if (string=? s "") 0 (str->num s)))))
 
   (define mail-start (lambda (dir)
-    (begin (fs-mkdir dir) (chat-start (chat-dir dir))
+    (begin (fs-mkdir dir) (chat-start (chat-dir dir)) (group-start (string-append dir "/group"))
            (fs-mkdir (string-append dir "/p")) (fs-mkdir (string-append dir "/box"))
            (fs-mkdir (string-append dir "/mark")) (fs-mkdir (string-append dir "/pend")) dir)))
 
   ; ── addressing (1, 2) ─────────────────────────────────────────────────
-  ; a body's `to` names
+  ; a body's `to` names: a name, or a group/<g> word's members (SPEC-group 4)
+  (define gdir (lambda (dir) (string-append dir "/group")))
+  (define group-names (lambda (dir g) (map (lambda (nr) (car nr)) (group-members (gdir dir) g))))
+  (define mail-to-in (lambda (dir body)
+    (fold (lambda (acc w)
+            (union acc (if (= (chat-name? w) 1) (list w)
+                         (if (= (has-prefix w "group/") 1) (group-names dir (rest-of w 6)) (list)))))
+          (list) (words (chat-hdr (list-get (chat-headers body) 0) "to")))))
+  ; the names alone (push.wisp: does an explicit to name colin?)
   (define mail-to (lambda (body)
     (filter (lambda (w) (= (chat-name? w) 1))
       (words (chat-hdr (list-get (chat-headers body) 0) "to")))))
+  ; a branch's members: its group's if its state has one, else chat's
+  (define mail-members (lambda (dir b)
+    (let (br (chat-branch (chat-dir dir) b))
+      (if (null? br) (list)
+        (let (g (fold (lambda (acc kv) (if (string=? (car kv) "group") (list-get kv 1) acc)) "" (list-get br 3)))
+          (if (string=? g "") (list-get br 2) (group-names dir g)))))))
 
   ; the names text @-mentions: every name-shaped prefix after an @ that
   ; chat-mentions? accepts (so "@ada." gives ada)
@@ -78,9 +95,9 @@
   (define chat-rule (lambda (dir id)
     (let (m (chat-msg (chat-dir dir) id))
       (if (null? m) (list)
-        (let (br (chat-branch (chat-dir dir) (list-get m 0)))
+        (let (br (mail-members dir (list-get m 0)))
           (let (th (if (string=? (list-get m 2) "") (list) (chat-thread (chat-dir dir) (list-get m 2))))
-            (union (union (if (null? br) (list) (list-get br 2)) (if (null? th) (list) (list-get th 2)))
+            (union (union br (if (null? th) (list) (list-get th 2)))
                    (mentions-from (list-get m 3) 0 (list)))))))))
 
   ; ── the read mark (3) ─────────────────────────────────────────────────
@@ -105,7 +122,8 @@
         (begin
           (fs-write (string-append dir "/n") (num->str n))
           (fs-write (ppath dir id) (num->str n))
-          (let (added (if (= (has-prefix scope "chat/") 1) (chat-add (chat-dir dir) id scope kind text) ""))
+          (let (added (if (= (has-prefix scope "chat/") 1) (chat-add (chat-dir dir) id scope kind text)
+                        (if (= (has-prefix scope "group/") 1) (group-add (gdir dir) id scope kind text) "")))
             (begin
               (map (lambda (name) (advance dir name id)) (set-of (string-append dir "/pend/" id)))
               (let (body (list-get (chat-canon text) 2))
@@ -113,7 +131,7 @@
                   (begin (if (string=? kind "mail.read") (add-read dir scope body) 0) (list))
                   (let (from (chat-hdr (list-get (chat-headers body) 0) "from"))
                     (let (names (filter (lambda (x) (not (string=? x from)))
-                                  (union (mail-to body)
+                                  (union (mail-to-in dir body)
                                          (if (and (string=? kind "chat.msg") (not (string=? added ""))) (chat-rule dir id) (list)))))
                       (begin
                         (map (lambda (x) (fs-append (string-append dir "/box/" x) (string-append id "\n"))) names)

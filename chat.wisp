@@ -7,7 +7,9 @@
 ;   send <len>\n<thread>\n<kind>\n<parent ids, space-separated, or ->\n<body>
 ;
 ; kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit, and the event's
-; scope is chat/<thread>; or mail.read (field/SPEC-mailbox.md), and <thread> is its scope, mail/<name>.
+; scope is chat/<thread>. Or one of these, and <thread> is the scope itself: mail.read in
+; mail/<name> (field/SPEC-mailbox.md); group.add, group.remove, group.open in group/<name>
+; (field/SPEC-group.md); doc.set, doc.edit in doc/<name>.
 ; Bytes so far wait in field/chat-conn/<cid>, as a request can arrive in pieces.
 (module chat
   (provide chat-connection chat-data chat-closed chat-serve)
@@ -35,11 +37,16 @@
     (string-append word " " (num->str (string-len payload)) "\n" payload)))
 
   (define kind-ok? (lambda (k)
-    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read") string=?)))
+    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
+                    "group.add" "group.remove" "group.open" "doc.set" "doc.edit") string=?)))
 
-  ; a read mark's scope (field/SPEC-mailbox.md 3)
-  (define mail-scope? (lambda (t)
-    (if (< (string-len t) 6) 0 (if (string=? (substring t 0 5) "mail/") 1 0))))
+  ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
+  (define scope-for (lambda (k)
+    (if (string=? k "mail.read") "mail/"
+      (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "group.")) "group/"
+        (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/" "")))))
+  (define in-scope? (lambda (t p)
+    (if (<= (string-len t) (string-len p)) 0 (if (string=? (substring t 0 (string-len p)) p) 1 0))))
 
   (define parent-list (lambda (line)
     (if (string=? line "-") (list)
@@ -54,10 +61,11 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit or mail.read")
-                  (if (and (string=? kind "mail.read") (not (mail-scope? thread))) (reply "err" "mail.read goes in mail/<name>")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set or doc.edit")
+                  (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
+                    (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
-                    (let (r (field-post-to FIELD "chat" (if (string=? kind "mail.read") thread (string-append "chat/" thread)) kind
+                    (let (r (field-post-to FIELD "chat" (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
                                         (substring p (+ k 1) (string-len p))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
