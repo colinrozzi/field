@@ -20,7 +20,8 @@
 ; Times stay as the event's milliseconds: they order chat.set as seconds would.
 (module chatmodel
   (provide chat-add chat-name? chat-mentions? chat-msg chat-branch chat-thread
-           chat-reaches chat-tickets chat-start)
+           chat-reaches chat-tickets chat-start
+           chat-canon chat-headers chat-hdr chat-newer chat-str-lt)
   (require list "std/list.wisp")
 
   (define b-nl (string-ref "\n" 0))
@@ -273,4 +274,12 @@
   (define num->str (lambda (n)
     (if (< n 10) (substring "0123456789" n (+ n 1))
       (string-append (num->str (/ n 10)) (num->str (- n (* 10 (/ n 10))))))))
+
+  ; for field/docmodel.wisp: the canonical text -> (list time parents body);
+  ; body -> (list header-lines text); a header's value; is (t, id) >= st?
+  (define chat-canon (lambda (text) (canon-from text 0 "0" (list))))
+  (define chat-headers headers)
+  (define chat-hdr (lambda (ls k) (hdr-in ls k 0)))
+  (define chat-newer newer)
+  (define chat-str-lt str-lt)
 )

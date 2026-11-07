@@ -55,6 +55,16 @@ A message reaches NAME when someone else wrote it and NAME is a member of
 its branch, is in its thread (wrote the message or a reply), or is named as
 `@NAME`. Writing in a branch makes you a member.
 
+## Documents
+
+A branch whose state has `doc` (its title) is a document: sections that
+people edit (`chat.edit`, one head per section, or several when two edits
+fork it), comments on a section (a post with a `sec` header) and resolving
+them (a reply with `resolve yes`). Every edit is kept. field/SPEC-doc.md;
+`lib/chat ME docs`, `doc`, `doc-edit`, `doc-comment`, `doc-resolve`;
+`/today/docs` in colin's browser. The first is the theater permissions
+policy, branch `theater-permissions` (ticket 0068).
+
 ## Agents
 
 `lib/chat ME VERB ...` (run with no arguments for the list): `post`,

@@ -66,7 +66,8 @@ Replies use the node's framing (`ok <n>\n<id>` or `err <n>\n<reason>`):
 |---|---|
 | `post wants <thread>\n<kind>\n<body>` | the payload has too few LFs (sent as two characters, backslash and `n`) |
 | `bad thread name` | `<thread>` is empty or contains a space |
-| `kind is chat.msg, chat.join, chat.leave, chat.branch or chat.set` | any other kind |
+| `kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit` | any other kind |
+| `body over 16384 bytes` | the body is larger than the node takes (SPEC-node 2.1) |
 | `post wants <len>` | `<n>` is not digits; the rest of the buffer is dropped |
 | `unknown request` | the line starts with neither `post ` nor `send `; the rest of the buffer is dropped |
 | `request too large` | more than 20000 bytes buffered; the connection is closed |
@@ -126,6 +127,7 @@ Unknown keys are ignored.
 | `chat.join` | `from`, `branch BRANCH`, `who MEMBER` | none | none |
 | `chat.leave` | `from`, `branch BRANCH`, `who MEMBER` | none | none |
 | `chat.set` | `from`, `branch BRANCH`, `key KEY` | the value | none |
+| `chat.edit` | `from`, `in BRANCH`, `sec S`, `title T`, `after S2` | a document section (field/SPEC-doc.md) | the section's heads |
 
 The examples below are bodies (the event's `body` field), byte for byte:
 
@@ -315,8 +317,14 @@ record). lib/chat follows its node with a cursor, so a process started
 before a new kind existed would skip that kind's events **and move its
 cursor past them**, never to read them again. To stop that:
 
-- `READS` in lib/chat is the number of kinds this code knows (today `2`;
-  `2` means "knows chat.set"). It MUST rise with each new kind.
+- `READS` in lib/chat is the number of kinds this code knows (today `3`;
+  `2` means "knows chat.set", `3` "knows chat.edit and a message's `sec`
+  and `resolve`", field/SPEC-doc.md). It MUST rise with each new kind.
+- An index whose `reads` is lower than this code's `READS` was read without
+  what this code keeps: the reader reads the room again from the start,
+  keeping the read marks (the chain is append-only, so every message gets
+  the same seq). Raising `v` instead would make older code rebuild the index
+  over newer code's, resetting `reads` and the marks.
 - The index records the highest `READS` that has read it (`reads`; missing
   means 1).
 - Before reading, if the index's `reads` is greater than this code's

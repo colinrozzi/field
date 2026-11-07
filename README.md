@@ -23,8 +23,10 @@ Written in [Wisp](https://github.com/colinrozzi/wisp), run as sessions of a
 | `client.wisp` | posting to a node from Wisp |
 | `chat.wisp` | the chat posting service (signs with the node's `chat` key) |
 | `chatmodel.wisp` | the chat model, kept in files, for Wisp readers |
+| `docmodel.wisp` | documents (sections, edits, comments) on top of it; SPEC-doc.md |
 | `feed.wisp` | turns outside reports (GitHub, agent status) into events |
 | `vectors/chat/` | chat test vectors, and `run`, which checks `chatmodel.wisp` against them on a throwaway daemon |
+| `vectors/doc/` | document test vectors (`make` writes them), and `run` for `docmodel.wisp` |
 | `rules` | which keys may write which scopes |
 | `desktop/`, `server3/` | the start files of a two-node deployment: a desktop that syncs both ways through a server's gate |
 

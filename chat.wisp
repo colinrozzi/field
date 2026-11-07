@@ -15,6 +15,7 @@
   (require list "std/list.wisp")
 
   (define MAX-REQUEST 20000)
+  (define MAX-BODY 16384)   ; what the node takes (SPEC-node 2.1)
   (define b-nl (string-ref "\n" 0))
   (define b-space (string-ref " " 0))
 
@@ -33,7 +34,7 @@
     (string-append word " " (num->str (string-len payload)) "\n" payload)))
 
   (define kind-ok? (lambda (k)
-    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set") string=?)))
+    (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit") string=?)))
 
   (define parent-list (lambda (line)
     (if (string=? line "-") (list)
@@ -48,12 +49,13 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch or chat.set")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit")
+                    (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
                     (let (r (field-post-to FIELD "chat" (string-append "chat/" thread) kind
                                         (substring p (+ k 1) (string-len p))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
-                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))
+                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r))))))))))))))
 
   ; Handle every complete request in buf -> what's left.
   (define drain (lambda (cid buf)

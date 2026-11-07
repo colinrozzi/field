@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Write the document vectors (README.md here) from the cases below.
+
+    field/vectors/doc/make
+
+Each case is a list of events, as (id suffix, kind, time in s, parents, headers,
+text), and what must hold after reading them in that order.
+"""
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+AUTHOR = "c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20"
+T0 = 1793541600000
+
+
+def eid(case, n):
+    return f"d{case}" + "0" * (62 - len(str(n))) + str(n)
+
+
+def event(case, n, kind, t, parents, headers, text=None, scope="chat/main"):
+    body = "".join(f"{k} {v}\n" for k, v in headers) + ("" if text is None else "\n" + text)
+    lines = ["sig " + "0" * 128, "field 1", "author " + AUTHOR, "scope " + scope, "kind " + kind,
+             f"time {T0 + t * 1000}"] + [f"parent {p}" for p in sorted(parents)]
+    lines.append(f"body {len(body.encode())}")
+    return [eid(case, n), scope, kind, "\n".join(lines) + "\n" + body]
+
+
+def doc(case, n, t, b, title, status=None):
+    out = [event(case, n, "chat.set", t, [], [("from", "colin"), ("branch", b), ("key", "doc")], title)]
+    if status:
+        out.append(event(case, n + 1, "chat.set", t, [], [("from", "colin"), ("branch", b), ("key", "doc-status")], status))
+    return out
+
+
+def edit(case, n, t, parents, b, sec, title, text, who="tova", after=None):
+    hs = [("from", who), ("in", b), ("sec", sec), ("title", title)] + ([("after", after)] if after is not None else [])
+    return event(case, n, "chat.edit", t, parents, hs, text)
+
+
+def ids(case, *ns):
+    return [eid(case, n) for n in ns]
+
+
+cases = []
+
+# 1: sections and their order
+c = 1
+evs = doc(c, 1, 0, "policy", "Theater permissions", "draft") + [
+    edit(c, 3, 1, [], "policy", "scope", "Scope", "What this covers."),
+    edit(c, 4, 2, [], "policy", "spawn", "Who may spawn", "A child never has more than its parent.", after="scope"),
+    edit(c, 5, 3, [], "policy", "files", "Files", "Each actor its own root.", after="spawn"),
+    edit(c, 6, 4, [], "policy", "terms", "Terms", "Definitions.", after="scope"),
+    edit(c, 7, 5, [], "policy", "lost", "Lost", "Its place is gone.", after="nowhere"),
+    edit(c, 8, 6, ids(c, 4), "policy", "spawn", "Who may spawn", "A child never has more than its spawner.", who="colin"),
+]
+cases.append({"name": "sections", "about": "a document, sections placed with after (a newer sibling goes first, a missing place goes last), an edit replacing its parent as the head",
+  "events": evs,
+  "expect": {"docs": [["policy", "Theater permissions", "draft"]],
+             "sections": {"policy": [["scope", ids(c, 3), False], ["terms", ids(c, 6), False], ["spawn", ids(c, 8), False],
+                                     ["files", ids(c, 5), False], ["lost", ids(c, 7), False]]},
+             "edits": {eid(c, 8): {"b": "policy", "sec": "spawn", "from": "colin", "title": "Who may spawn", "after": "",
+                                   "text": "A child never has more than its spawner."},
+                       eid(c, 4): {"after": "scope", "text": "A child never has more than its parent."}},
+             "history": {"policy": {"spawn": ids(c, 4, 8)}}}})
+
+# 2: a fork and its join
+c = 2
+evs = doc(c, 1, 0, "policy", "Policy") + [
+    edit(c, 2, 1, [], "policy", "net", "Network", "None."),
+    edit(c, 3, 2, ids(c, 2), "policy", "net", "Network", "Only to the registry.", who="tova"),
+    edit(c, 4, 2, ids(c, 2), "policy", "net", "Network", "Only localhost.", who="sage"),
+]
+cases.append({"name": "fork", "about": "two edits on one head fork the section (newest first, equal times by the larger id)",
+  "events": evs,
+  "expect": {"docs": [["policy", "Policy", "draft"]], "sections": {"policy": [["net", ids(c, 4, 3), False]]}}})
+evs = evs + [edit(c, 5, 3, ids(c, 3, 4), "policy", "net", "Network", "Only localhost and the registry.", who="colin")]
+cases.append({"name": "join", "about": "an edit naming both heads joins the fork",
+  "events": evs,
+  "expect": {"sections": {"policy": [["net", ids(c, 5), False]]}, "history": {"policy": {"net": ids(c, 2, 3, 4, 5)}}}})
+
+# 3: removing a section and bringing it back
+c = 3
+evs = doc(c, 1, 0, "p", "P", "decided") + [
+    edit(c, 2, 1, [], "p", "a", "A", "one"),
+    edit(c, 3, 2, [], "p", "b", "B", "two", after="a"),
+    edit(c, 4, 3, ids(c, 2), "p", "a", "", ""),
+]
+cases.append({"name": "remove", "about": "an edit with no title and no text removes a section; it keeps its place",
+  "events": evs,
+  "expect": {"docs": [["p", "P", "decided"]], "sections": {"p": [["a", ids(c, 4), True], ["b", ids(c, 3), False]]}}})
+evs = evs + [edit(c, 5, 4, ids(c, 4), "p", "a", "A", "back")]
+cases.append({"name": "restore", "about": "a later edit brings a removed section back",
+  "events": evs, "expect": {"sections": {"p": [["a", ids(c, 5), False], ["b", ids(c, 3), False]]}}})
+
+# 4: comments and resolving them
+c = 4
+msg = lambda n, t, parents, hs, text: event(c, n, "chat.msg", t, parents, [("from", "sage"), ("in", "p")] + hs, text)
+evs = doc(c, 1, 0, "p", "P") + [
+    edit(c, 2, 1, [], "p", "a", "A", "one"),
+    msg(3, 2, [], [("sec", "a")], "why one?"),
+    msg(4, 3, ids(c, 3), [("sec", "b")], "and b, before it exists"),
+    msg(5, 4, ids(c, 4), [], "a plain post"),
+    msg(6, 5, ids(c, 3), [("re", eid(c, 3)), ("sec", "a")], "a reply is not a comment"),
+    msg(7, 7, ids(c, 6), [("re", eid(c, 3)), ("resolve", "yes")], "fixed"),
+    msg(8, 6, ids(c, 7), [("re", eid(c, 3)), ("resolve", "no")], "older, so it loses"),
+    msg(9, 8, ids(c, 4), [("re", eid(c, 4)), ("resolve", "maybe")], "not yes or no"),
+    msg(10, 9, ids(c, 5), [("sec", "Bad Name")], "not a section name"),
+]
+cases.append({"name": "comments", "about": "posts with sec are comments (even before the section exists); a reply's resolve, newest by time, resolves its root",
+  "events": evs,
+  "expect": {"comments": {"p": {"a": ids(c, 3), "b": ids(c, 4)}},
+             "resolved": {eid(c, 3): "yes", eid(c, 4): "", eid(c, 5): ""}}})
+
+# 5: what does not count, and place by the earliest edit
+c = 5
+evs = doc(c, 1, 0, "p", "P") + [
+    edit(c, 2, 1, [], "p", "a", "A", "one"),
+    edit(c, 3, 2, [], "p", "b", "B", "two"),
+    edit(c, 4, 5, [], "p", "c", "C", "late, at the top"),
+    edit(c, 5, 3, [], "p", "c", "C", "earlier, after a", after="a"),
+    edit(c, 6, 6, [], "Bad", "x", "X", "bad branch"),
+    edit(c, 7, 6, [], "p", "-x", "X", "bad section"),
+    event(c, 8, "chat.edit", 6, [], [("from", "tova"), ("in", "p"), ("sec", "y")], "legacy scope", scope="chat/p"),
+    event(c, 9, "chat.set", 7, [], [("from", "colin"), ("branch", "q"), ("key", "title")], "not a document"),
+]
+cases.append({"name": "earliest-place", "about": "a section's place is the after of its earliest edit, whatever order they arrive in; bad names, other scopes and branches without doc are not documents",
+  "events": evs,
+  "expect": {"docs": [["p", "P", "draft"]],
+             "sections": {"p": [["b", ids(c, 3), False], ["a", ids(c, 2), False], ["c", ids(c, 4, 5), False]]},
+             "no_edits": ids(c, 6, 7, 8)}})
+
+for i, case in enumerate(cases, 1):
+    (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")

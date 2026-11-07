@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Check field/docmodel.wisp against the document vectors (README.md here).
+
+    field/vectors/doc/run [CASE.json ...]
+
+Uses field/vectors/chat/run's private daemon (its own port and filesystem
+root; nothing touches the real node), feeds each event to chat-add and then
+doc-add, and asks the model for each fact in `expect`.
+"""
+import importlib.machinery, importlib.util, json, sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+_loader = importlib.machinery.SourceFileLoader("chatrun", str(HERE.parent / "chat" / "run"))
+_spec = importlib.util.spec_from_loader("chatrun", _loader)
+chatrun = importlib.util.module_from_spec(_spec)
+_loader.exec_module(chatrun)
+wstr, F, L, lst, canon = chatrun.wstr, chatrun.F, chatrun.L, chatrun.lst, chatrun.canon
+
+
+def check(d, case):
+    dirn = "dv-" + case["name"]
+    d.eval(f'(doc-start {wstr(dirn)})')
+    for id_, scope, kind, text in case["events"]:
+        args = f'{wstr(dirn)} {wstr(id_)} {wstr(scope)} {wstr(kind)} {wstr(canon(text))}'
+        d.eval(f'(begin (chat-add {args}) (doc-add {args}))')
+    fails = []
+    exp = case["expect"]
+
+    def raw(form):
+        out = d.eval(f'(let (x {form}) (if (null? x) "-none-" (join-f x)))')
+        return None if out == "-none-" else out.split(F)[1:]
+
+    if "docs" in exp:
+        got = [x.split(" ", 2) for x in lst((raw(f'(list (join-l (map (lambda (x) (string-append (list-get x 0) " " (list-get x 2) " " (list-get x 1))) (doc-list {wstr(dirn)}))))') or [""])[0])]
+        got = [[b, title, st] for b, st, title in got]
+        if got != exp["docs"]:
+            fails.append(f"docs: {got!r} != {exp['docs']!r}")
+    for b, want in exp.get("sections", {}).items():
+        rows = raw(f'(map (lambda (s) (string-append (list-get s 0) " " (if (list-get s 2) "1" "0") " " (join-l (list-get s 1)))) (doc-sections {wstr(dirn)} {wstr(b)}))') or []
+        got = []
+        for r in rows:
+            sec, rm, hs = r.split(" ", 2)
+            got.append([sec, lst(hs), rm == "1"])
+        if got != want:
+            fails.append(f"sections {b}: {got!r} != {want!r}")
+    for id_, want in exp.get("edits", {}).items():
+        e = raw(f'(let (e (doc-edit {wstr(dirn)} {wstr(id_)})) (if (null? e) e (list (list-get e 0) (list-get e 1) (list-get e 2) (list-get e 4) (list-get e 5) (list-get e 7))))')
+        if e is None:
+            fails.append(f"edit {id_[:8]}..{id_[-2:]} missing"); continue
+        got = dict(zip(["b", "sec", "from", "title", "after", "text"], e))
+        for k, v in want.items():
+            if got[k] != v:
+                fails.append(f"edit ..{id_[-2:]} {k}: {got[k]!r} != {v!r}")
+    for id_ in exp.get("no_edits", []):
+        if raw(f'(doc-edit {wstr(dirn)} {wstr(id_)})') is not None:
+            fails.append(f"edit ..{id_[-2:]} should not exist")
+    for what, fn in (("history", "doc-history"), ("comments", "doc-comments")):
+        for b, secs in exp.get(what, {}).items():
+            for sec, want in secs.items():
+                got = lst((raw(f'(list (join-l ({fn} {wstr(dirn)} {wstr(b)} {wstr(sec)})))') or [""])[0])
+                if got != want:
+                    fails.append(f"{what} {b}/{sec}: {got!r} != {want!r}")
+    for root, want in exp.get("resolved", {}).items():
+        got = (raw(f'(list (doc-resolved {wstr(dirn)} {wstr(root)}))') or [""])[0]
+        if got != want:
+            fails.append(f"resolved ..{root[-2:]}: {got!r} != {want!r}")
+    return fails
+
+
+def main():
+    files = [Path(a) for a in sys.argv[1:]] or sorted(HERE.glob("*.json"))
+    bad = 0
+    with chatrun.Daemon() as d:
+        d.eval(chatrun.JOIN)
+        d.eval('(require docmodel "experiment/field/docmodel.wisp")')
+        for f in files:
+            case = json.loads(f.read_text())
+            try:
+                fails = check(d, case)
+            except RuntimeError as e:
+                fails = [f"error: {e}"]
+            print(("ok   " if not fails else "FAIL ") + f.name)
+            for x in fails:
+                print("     " + x)
+            bad += bool(fails)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()
