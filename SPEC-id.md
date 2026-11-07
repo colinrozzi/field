@@ -1,7 +1,7 @@
 # Identity: specification
 
-Status: draft, ticket 0079, 2026-11-07 (ada). Step 3 of the design document
-`identity-groups-mailbox`. For tova to review before anything is built.
+Status: ticket 0079, 2026-11-07 (ada; agreed with tova in the ticket's
+branch). Step 3 of the design document `identity-groups-mailbox`.
 
 An **identity** is a name and its keys, and nothing else (colin: small
 core). People, agents, services and machines are all identities, and every
@@ -24,17 +24,27 @@ Identity `N` lives in scope `id/N`. Bodies are header lines (SPEC-chat 4.1).
 The event's **author** (the key that signed it, SPEC-node 2.1) says who may
 write it:
 
-1. **The first key** of `N` is written by a **registrar**: a key the node's
-   rules list for `id/` (section 4). Nobody claims a name by writing it
-   first.
+1. **The first key** of `N` is written by a **registrar**: one of the two
+   node keys (`desktop`, `server3`), listed in the node's rules for `id/`
+   (section 4). Nobody claims a name by writing it first.
 2. **After that**, any current key of `N`, or a registrar, may add or
    retire a key of `N`. So a device can add the next device.
 3. A retired key cannot be added again.
 4. The last current key of `N` cannot be retired: an identity always keeps
    a key.
 
-An event that breaks these is refused by the node (section 3), and readers
-ignore it.
+**Two registrars at once.** If both registrars write a first key for the
+same name, both count. The name then has two keys, and either one, or a
+registrar, can retire the extra.
+
+**What is refused, and what is ignored.** The node refuses an `id.*` event
+only if its author could never write it: neither a registrar nor any key
+`N` has ever had (current or retired). An event it admits but that rules 2
+to 4 don't allow is ignored by every reader, the node included. Examples:
+a retired key adding a key, a re-added retired key, the last key retired.
+The reason is that a refused event stops a peer's sync until its rules
+change (SPEC-node 9.2). Two machines that saw events in a different order
+must not refuse each other's events.
 
 ## 2. The model
 
@@ -52,8 +62,11 @@ The node keeps the model of section 2, updated as it admits each `id.*`
 event. Admission (SPEC-node 5) gains one rule word:
 
 - **`id`**: a rules line `<prefix> id` admits an event whose author is a
-  current key of the name in its body's `from` header. A body with no
-  `from`, or a `from` with no identity, does not match.
+  key of the name in its body's `from` header. The key must be current, or
+  retired by an `id.retire` whose `time` is later than the event's. That
+  way an event signed just before a retirement still copies to a peer that
+  already saw the retirement. A body with no `from`, or a `from` with no
+  identity, does not match.
 
 Lines still combine as today: among the longest matching prefixes, any line
 that admits the author admits the event. So `chat/ id` beside `chat/ <chat
@@ -64,8 +77,12 @@ stored stay as they are.
 
 **Order between nodes.** An event signed by a new key arrives at a peer
 after the `id.key` that adds it, because peers copy in the sender's seen
-order (SPEC-node 9.2). A retired key's later events are refused. Its
-earlier ones were admitted when they arrived and stay.
+order (SPEC-node 9.2). A retired key's events are refused if they claim a
+time after the retirement.
+
+Times are claims (SPEC-node 2.1): a stolen key could still sign events
+dated before its retirement. Retiring a key stops honest use of it. It does
+not undo a theft; that needs sealing and a fresh identity.
 
 ## 4. Rules: from "the chat key may write" to "names may write"
 
@@ -83,9 +100,10 @@ earlier ones were admitted when they arrived and stay.
     a new node copies the history.
   - The chat key can no longer write anything new: node-chat stops using
     it, and nothing it writes after T is admitted.
-- **Time is a claim (SPEC-node 2.1).** Whoever holds the chat key could
-  still backdate an event. Nobody holds it but the node daemons, so this is
-  the same trust as today, and only for the past.
+- **`T` is the time the event claims (SPEC-node 2.1).** Whoever holds the
+  chat key could still backdate an event to before `T`. So the real
+  retirement is **deleting the chat key from both daemons** after `T`. That
+  is a step of part 3, and from then on nobody can sign as it at all.
 - **Groups as write rules.** "Names in group G may write scope S" is a
   later step that sits on top of this one, with sealing (0056). It would be
   a rules word `group:G`, admitting an author who is a current key of an
@@ -157,7 +175,7 @@ I'd do 1 in this ticket and 2 as its own.
 2. Keys for everyone (section 5), and live.wisp signing as colin.
    node-chat signs per name. Rules step B.
 3. After a quiet period with every writer signing as itself, rules step C:
-   the chat key only before T.
+   the chat key only before T. Then delete the chat key from both daemons.
 
 Not in this ticket: groups as write rules, sealing, per-device browser keys,
 and key holders separated per agent.
