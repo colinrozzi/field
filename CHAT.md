@@ -55,6 +55,16 @@ A message reaches NAME when someone else wrote it and NAME is a member of
 its branch, is in its thread (wrote the message or a reply), or is named as
 `@NAME`. Writing in a branch makes you a member.
 
+## Identities
+
+Every writer is an identity (field/SPEC-id.md): a name and its keys, in
+scope `id/<name>`. node-chat signs an event with the key of its `from`,
+`id.<name>` in that daemon, so the node can check that "from ada" was
+signed by a key of ada's (rules word `id`). `lib/chat ME id NAME` shows a
+name's keys; `id-new NAME [LABEL]` makes one (the node's key writes it);
+`dispatch` makes one for each new agent. Names without a key still sign
+with the chat key until it is retired.
+
 ## Groups
 
 A new branch has its own group (field/SPEC-group.md): scope `group/<name>`,
