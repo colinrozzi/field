@@ -193,19 +193,31 @@ Which authors may write which scopes is the node's **rules** (section 5).
 
 A reason is returned with the prefix `error: `, e.g. `error: bad signature`.
 
-**Rules.** The file `field/rules` holds lines `<scope prefix> <author key or
-*>`. A line that is not exactly two space-separated words is ignored.
+**Rules.** The file `field/rules` holds lines `<scope prefix> <who>`, where
+`<who>` is one of:
+
+- an author key, or `*`;
+- `id`: the author is a key of the identity named by the body's `from`
+  header (field/SPEC-id.md 3);
+- `<key> before <ms>` (four words): that key, for events whose `time` is
+  less than `ms`.
+
+Any other line is ignored.
 
 - If the file is missing or empty, every scope is open to every author.
 - Otherwise, take the lines whose prefix the scope starts with (a plain
   string prefix: `chat/` matches `chat/main`, and `ab` matches `abc`). Among
   them, take those with the **longest** prefix. The author may write if one
-  of those names the author or `*`.
+  of those admits it.
+- In scope `id/<name>`, the matching lines' keys are the **registrars**, and
+  the author may write if it is a registrar or any key the name has ever
+  had. The node keeps identities in `field/ids/` as it admits `id.*` events
+  (idmodel.wisp), and ignores an event that SPEC-id 1 does not allow.
 - A scope no line matches is closed.
 
 The desktop's rules today: `github/`, `agents/`, `ops/`; `chat/`, `mail/`,
 `group/` and `doc/` (two keys each: each node's `chat`); `field/notes` (two
-keys). Each prefix names its
+keys); `id/` (the node keys, the registrars). Each prefix names its
 writers.
 
 Rules are local: two nodes with different rules can disagree about an event.
@@ -270,6 +282,8 @@ lives only in memory.
 | `field/seen-next/<id>` | the id of the seen event after `<id>` (the chain links backwards through `parent`; this file links forwards) |
 | `field/unseen/<id>` | an admitted event not yet in the chain |
 | `field/rules` | admission rules (section 5) |
+| `field/ids/<name>/keys`, `retired`, `ever` | identities, kept as `id.*` events are admitted (field/SPEC-id.md) |
+| `field/node` | this node's name, which is its key's name (node-chat signs `id.*` with it) |
 | `field/subs` | subscribers (section 6) |
 | `field/conn/<cid>` | request bytes received but not yet handled, per connection |
 | `field/watchers` | connection ids that sent `watch`, one per line |

@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Check field/idmodel.wisp against the identity vectors (README.md here).
+
+    field/vectors/id/run [CASE.json ...]
+
+Uses field/vectors/chat/run's private daemon (its own port and filesystem
+root; nothing touches the real node).
+"""
+import importlib.machinery, importlib.util, json, re, sys
+
+sys.dont_write_bytecode = True
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+_loader = importlib.machinery.SourceFileLoader("chatrun", str(HERE.parent / "chat" / "run"))
+_spec = importlib.util.spec_from_loader("chatrun", _loader)
+chatrun = importlib.util.module_from_spec(_spec)
+_loader.exec_module(chatrun)
+wstr, lst, canon = chatrun.wstr, chatrun.lst, chatrun.canon
+
+
+def check(d, case):
+    D = wstr("iv-" + case["name"])
+    regs = "(list " + " ".join(wstr(r) for r in case["registrars"]) + ")"
+    d.eval(f'(id-start {D})')
+    for id_, scope, kind, text in case["events"]:
+        author = re.search(r"^author (\S+)$", text, re.M).group(1)
+        d.eval(f'(id-apply {D} {wstr(scope)} {wstr(kind)} {wstr(canon(text))} {wstr(author)} {regs})')
+    fails, exp = [], case["expect"]
+    for n, want in exp.get("keys", {}).items():
+        got = [x.split(" ", 1) for x in lst(d.eval(f'(join-l (map (lambda (kl) (string-append (car kl) " " (list-get kl 1))) (id-keys {D} {wstr(n)})))'))]
+        if got != want:
+            fails.append(f"keys {n}: {got!r} != {want!r}")
+    for n, want in exp.get("retired", {}).items():
+        got = lst(d.eval(f'(join-l (map car (id-retired {D} {wstr(n)})))'))
+        if got != want:
+            fails.append(f"retired {n}: {got!r} != {want!r}")
+    for n, a, want in exp.get("may_write", []):
+        got = d.eval(f'(id-may-write {D} {wstr(n)} {wstr(a)} {regs})') == "1"
+        if got != want:
+            fails.append(f"may_write {n} {a[:6]}: {got} != {want}")
+    for n, a, t, want in exp.get("key_ok", []):
+        got = d.eval(f'(id-key-ok {D} {wstr(n)} {wstr(a)} {wstr(t)})') == "1"
+        if got != want:
+            fails.append(f"key_ok {n} {a[:6]} {t}: {got} != {want}")
+    return fails
+
+
+def main():
+    files = [Path(a) for a in sys.argv[1:]] or sorted(HERE.glob("*.json"))
+    bad = 0
+    with chatrun.Daemon() as d:
+        d.eval(chatrun.JOIN)
+        d.eval('(require idmodel "experiment/field/idmodel.wisp")')
+        for f in files:
+            case = json.loads(f.read_text())
+            try:
+                fails = check(d, case)
+            except RuntimeError as e:
+                fails = [f"error: {e}"]
+            print(("ok   " if not fails else "FAIL ") + f.name)
+            for x in fails:
+                print("     " + x)
+            bad += bool(fails)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()

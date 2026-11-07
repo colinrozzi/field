@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Write the identity vectors (README.md here) from the cases below.
+
+    field/vectors/id/make
+"""
+import json
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+T0 = 1793541600000
+R1, R2 = "e1" * 32, "e2" * 32          # the registrars (the node keys)
+K = lambda n: "%064x" % (0xabc000 + n)  # other keys
+
+
+def eid(case, n):
+    return f"a{case}" + "0" * (62 - len(str(n))) + str(n)
+
+
+def event(case, n, kind, author, name, headers, t=None):
+    body = "".join(f"{k} {v}\n" for k, v in headers)
+    scope = f"id/{name}"
+    lines = ["sig " + "0" * 128, "field 1", "author " + author, "scope " + scope, "kind " + kind,
+             f"time {T0 + (n if t is None else t) * 1000}", f"body {len(body.encode())}"]
+    return [eid(case, n), scope, kind, "\n".join(lines) + "\n" + body]
+
+
+def key(case, n, author, name, k, label=None, t=None):
+    return event(case, n, "id.key", author, name, [("from", name), ("key", k)] + ([("label", label)] if label else []), t)
+
+
+def retire(case, n, author, name, k, t=None):
+    return event(case, n, "id.retire", author, name, [("from", name), ("key", k)], t)
+
+
+T = lambda s: str(T0 + s * 1000)
+cases = []
+
+c = 1
+cases.append({"name": "first-key", "about": "a registrar writes a name's first key; nobody else can; a current key adds the next",
+  "registrars": [R1, R2],
+  "events": [key(c, 1, R1, "ada", K(1), "desktop"), key(c, 2, K(9), "tova", K(9)), key(c, 3, K(1), "ada", K(2), "phone")],
+  "expect": {"keys": {"ada": [[K(1), "desktop"], [K(2), "phone"]], "tova": []},
+             "may_write": [["ada", K(1), True], ["ada", R2, True], ["tova", K(9), False], ["ada", K(9), False]]}})
+
+c = 2
+cases.append({"name": "retire", "about": "a retired key adds nothing and is never re-added; the last key stays; the id rule admits a retired key only for events claiming a time before the retirement",
+  "registrars": [R1, R2],
+  "events": [key(c, 1, R1, "ada", K(1)), key(c, 2, K(1), "ada", K(2)), retire(c, 5, K(2), "ada", K(1)),
+             key(c, 6, K(1), "ada", K(3)), key(c, 7, R1, "ada", K(1)), retire(c, 8, K(2), "ada", K(2))],
+  "expect": {"keys": {"ada": [[K(2), ""]]}, "retired": {"ada": [K(1)]},
+             "may_write": [["ada", K(1), True], ["ada", K(3), False]],
+             "key_ok": [["ada", K(1), T(4), True], ["ada", K(1), T(6), False], ["ada", K(2), T(99), True], ["ada", K(3), T(1), False], ["bob", K(2), T(1), False]]}})
+
+c = 3
+cases.append({"name": "two-registrars", "about": "both registrars writing a first key for one name: both keys count, and either can retire the other",
+  "registrars": [R1, R2],
+  "events": [key(c, 1, R1, "jo", K(1)), key(c, 2, R2, "jo", K(2)), retire(c, 3, K(1), "jo", K(2))],
+  "expect": {"keys": {"jo": [[K(1), ""]]}, "retired": {"jo": [K(2)]}}})
+
+c = 4
+cases.append({"name": "bad", "about": "a key that isn't 64 lowercase hex, a scope that isn't id/<name>, and a non-registrar first key are ignored",
+  "registrars": [R1, R2],
+  "events": [key(c, 1, R1, "ivo", "ABC"), key(c, 2, R1, "Ivo", K(1)), key(c, 3, K(5), "ivo", K(5)), key(c, 4, R2, "ivo", K(4), "server3")],
+  "expect": {"keys": {"ivo": [[K(4), "server3"]], "Ivo": []}}})
+
+for i, case in enumerate(cases, 1):
+    (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")
+print(len(cases), "cases")

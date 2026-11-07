@@ -9,7 +9,10 @@
 ; kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit, and the event's
 ; scope is chat/<thread>. Or one of these, and <thread> is the scope itself: mail.read in
 ; mail/<name> (field/SPEC-mailbox.md); group.add, group.remove, group.open in group/<name>
-; (field/SPEC-group.md); doc.set, doc.edit in doc/<name>.
+; (field/SPEC-group.md); doc.set, doc.edit in doc/<name>; id.key, id.retire in id/<name>
+; (field/SPEC-id.md), signed with this node's own key (field/node), the registrar.
+; An id.key whose body has "key new" makes the name's key id.<name> in this
+; daemon (if it has none) and writes that key.
 ; Bytes so far wait in field/chat-conn/<cid>, as a request can arrive in pieces.
 (module chat
   (provide chat-connection chat-data chat-closed chat-serve)
@@ -38,13 +41,31 @@
 
   (define kind-ok? (lambda (k)
     (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
-                    "group.add" "group.remove" "group.open" "doc.set" "doc.edit") string=?)))
+                    "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
     (if (string=? k "mail.read") "mail/"
       (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "group.")) "group/"
-        (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/" "")))))
+        (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/"
+          (if (and (< 3 (string-len k)) (string=? (substring k 0 3) "id.")) "id/" ""))))))
+  ; id.* is signed by the registrar, this node's own key; the rest by "chat"
+  (define signer (lambda (kind)
+    (if (string=? (scope-for kind) "id/") (match (fs-read-text "field/node") ((ok n) n) ((err e) "no-node-name")) "chat")))
+  ; "key new" in an id.key: the name's own key id.<name>, made here if missing
+  (define id-body (lambda (kind thread body)
+      (if (or (not (string=? kind "id.key")) (< (string-len thread) 4)) body
+        (let (j (find-sub body "\nkey new\n" 0))
+          (if (< j 0) body
+            (let (name (substring thread 3 (string-len thread)))
+              (let (pub (match (key-public (string-append "id." name)) ((ok p) p)
+                          ((err e) (match (key-new (string-append "id." name)) ((ok p) p) ((err x) "")))))
+                (string-append (substring body 0 j) "\nkey " pub "\n" (substring body (+ j 9) (string-len body))))))))))
+  (define find-sub (lambda (s pat i)
+    (let (j (string-index s (string-ref pat 0) i))
+      (if (< j 0) -1
+        (if (< (string-len s) (+ j (string-len pat))) -1
+          (if (string=? (substring s j (+ j (string-len pat))) pat) j (find-sub s pat (+ j 1))))))))
   (define in-scope? (lambda (t p)
     (if (<= (string-len t) (string-len p)) 0 (if (string=? (substring t 0 (string-len p)) p) 1 0))))
 
@@ -65,8 +86,8 @@
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
-                    (let (r (field-post-to FIELD "chat" (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
-                                        (substring p (+ k 1) (string-len p))
+                    (let (r (field-post-to FIELD (signer kind) (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
+                                        (id-body kind thread (substring p (+ k 1) (string-len p)))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
                       (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))))

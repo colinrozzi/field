@@ -15,6 +15,9 @@
 ;   field/unseen/<id>          admitted but not yet in the seen chain; a crash
 ;                              leaves these, and field-start records them
 ;   field/subs                 subscribers: "<actor> <scope> <kind prefix>" lines
+;   field/node                 this node's name (its key's name)
+;   field/ids/<name>/...       identities (field/SPEC-id.md, idmodel.wisp), kept as
+;                              id.* events are admitted
 (module store
   (provide field-start field-append field-admit field-get field-exists field-file
            field-follow field-follow-n field-seen-head field-subscribe
@@ -22,6 +25,7 @@
            event-parents event-links event-body event-sig bad? bad-reason)
   (require list "std/list.wisp")
   (require str "std/str.wisp")
+  (require idmodel "experiment/field/idmodel.wisp")
 
   (define MAX-BODY 16384)
   (define FOLLOW-PAGE 16)   ; seen events per field-follow
@@ -226,20 +230,41 @@
                       id)))))))))))
 
   ; ── admission ─────────────────────────────────────────────────────────
-  ; Who may write where: field/rules, lines of "<scope prefix> <author key|*>"
-  ; (the file `rules` next to this one). The longest prefix matching the scope
-  ; decides. A scope no rule matches is closed; with no file, all are open.
+  ; Who may write where: field/rules (the file `rules` next to this one),
+  ; lines of "<scope prefix> <who>". The lines with the longest prefix
+  ; matching the scope decide; any of them admitting the event admits it. A
+  ; scope no rule matches is closed; with no file, all are open. <who> is
+  ;   <author key> or *
+  ;   id                  the author is a key of the body's `from` (SPEC-id 3)
+  ;   <key> before <ms>   that key, for events whose time is before ms
+  ; In id/<name> (SPEC-id 1) the matching lines' keys are the registrars, and
+  ; a registrar or any key the name has had may write; idmodel ignores what
+  ; it may not do.
+  (define IDS "field/ids")
   (define rule-matches (lambda (scope)
-    (filter (lambda (r) (and (= (length r) 2) (starts-with scope (nth r 0))))
+    (filter (lambda (r) (and (or (= (length r) 2) (and (= (length r) 4) (string=? (nth r 2) "before")))
+                             (starts-with scope (nth r 0))))
             (map words (lines (read-or "field/rules" ""))))))
-  (define may-write (lambda (scope author)
+  (define best-rules (lambda (scope)
+    (let (ms (rule-matches scope))
+      (let (best (fold (lambda (n r) (if (< n (string-len (nth r 0))) (string-len (nth r 0)) n)) -1 ms))
+        (filter (lambda (r) (= (string-len (nth r 0)) best)) ms)))))
+  (define registrars (lambda (scope) (map (lambda (r) (nth r 1)) (filter (lambda (r) (= (length r) 2)) (best-rules scope)))))
+  (define id-scope? (lambda (scope) (starts-with scope "id/")))
+  (define admits (lambda (r e)
+    (let (who (nth r 1))
+      (if (= (length r) 4)
+        (and (string=? who (event-author e)) (< (str->num (event-time e)) (str->num (nth r 3))))
+        (or (string=? who (event-author e)) (string=? who "*")
+            (and (string=? who "id")
+                 (= (id-key-ok IDS (id-from (event-body e)) (event-author e) (event-time e)) 1)))))))
+  (define may-write (lambda (e)
     (if (string=? (read-or "field/rules" "") "") 1
-      (let (ms (rule-matches scope))
-        (let (best (fold (lambda (n r) (if (< n (string-len (nth r 0))) (string-len (nth r 0)) n)) -1 ms))
-          (if (null? (filter (lambda (r)
-                (and (= (string-len (nth r 0)) best)
-                     (or (string=? (nth r 1) author) (string=? (nth r 1) "*")))) ms))
-            0 1))))))
+      (let (rs (best-rules (event-scope e)))
+        (if (null? rs) 0
+          (if (= (id-scope? (event-scope e)) 1)
+            (id-may-write IDS (substring (event-scope e) 3 (string-len (event-scope e))) (event-author e) (registrars (event-scope e)))
+            (if (null? (filter (lambda (r) (admits r e)) rs)) 0 1)))))))
 
   (define missing-parents (lambda (ps)
     (if (null? ps) (list)
@@ -256,12 +281,15 @@
       (let (e (parse id sig text))
         (if (bad? e) (bad-reason e)
         (if (= (sig-ok (event-author e) sig id) 0) "error: bad signature"
-        (if (= (may-write (event-scope e) (event-author e)) 0) "error: author may not write to this scope"
+        (if (= (may-write e) 0) "error: author may not write to this scope"
         (let (missing (missing-parents (event-parents e)))
           (if (not (null? missing)) (string-append "error: missing parent " (car missing))
             (begin
               (fs-write-durable (string-append "field/unseen/" id) "")
               (store-file id sig text)
+              (if (and (= (id-scope? (event-scope e)) 1) (= (starts-with (event-kind e) "id.") 1))
+                (id-apply IDS (event-scope e) (event-kind e) text (event-author e) (registrars (event-scope e)))
+                "")
               (record-seen store (list id))
               id))))))))))))
 
@@ -331,7 +359,8 @@
 
   (define field-start (lambda (store)
     (begin
-      (map fs-mkdir (list "field" "field/events" "field/seen-next" "field/unseen"))
+      (map fs-mkdir (list "field" "field/events" "field/seen-next" "field/unseen" IDS))
+      (fs-write "field/node" store)  ; this node's name, which is its key's: node-chat signs id.* with it
       ; a crash after admitting but before recording: record them now
       (let (unseen (dir-names "field/unseen"))
         (if (null? unseen) (field-seen-head) (record-seen store unseen))))))
