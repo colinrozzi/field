@@ -8,6 +8,8 @@ root; nothing touches the real node), feeds each event to chat-add and then
 doc-add, and asks the model for each fact in `expect`.
 """
 import importlib.machinery, importlib.util, json, sys
+
+sys.dont_write_bytecode = True
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
