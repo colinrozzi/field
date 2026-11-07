@@ -132,7 +132,9 @@ today.
 Posting `mail.read`: node-chat (field/chat.wisp) also accepts kind
 `mail.read` in scope `mail/<name>`, signed with the chat key like every chat
 event, until identities give each name its own key. A node's rules
-(SPEC-node 5) must open `mail/` to the chat keys.
+(SPEC-node 5) must open `mail/` to the chat keys, on every node before the
+first `mail.read` is written: a peer that refuses one event stops syncing
+from that node until its rules change (SPEC-node 9.2, step 5).
 
 ## 7. Conformance
 
