@@ -1,7 +1,7 @@
 # Groups: specification
 
-Status: draft, ticket 0074, 2026-11-07 (ada). Step 2 of the design document
-`identity-groups-mailbox`. For tova to review before anything is built.
+Status: ticket 0074, 2026-11-07 (ada; agreed with tova in the ticket's
+branch). Step 2 of the design document `identity-groups-mailbox`.
 
 A **group** is a set of members, each with a role, changed by events in its
 own scope. Chat branches and documents point to a group instead of keeping
@@ -90,13 +90,17 @@ Writers (lib/chat, the browser), from this ticket on:
   each member with role `write`, `group.open yes` (a branch is open, like
   chat today), the `chat.branch`, and `chat.set group G`.
 - **Joining, leaving, and the first post by a non-member** of an open
-  branch: `group.add` or `group.remove` of the writer.
+  branch: `group.add` or `group.remove` of the writer, so writing in a branch
+  still makes you a member. In a closed group the writer refuses the post
+  or join with a clear error (the writer, not the node).
 - **Keeping old readers working:** for every member a group-aware writer
   adds or removes, it also writes the matching `chat.join` or `chat.leave`,
   so readers that do not know groups still see the members.
 - **Existing branches:** `lib/chat ME group-make B` gives one a group. It
   writes the group from its current members (the writer as admin, the rest
-  `write`, open), then `chat.set group`.
+  `write`, open), then `chat.set group`. Every branch is converted once
+  parts 1 and 2 of this ticket are live and checked (part 3), so that only
+  one membership model is left.
 
 ## 6. Documents: the split
 
@@ -130,8 +134,9 @@ a chat branch for its discussion.
     `was <old edit id>`.
   - Last, `chat.set doc-moved B` on the old branch.
 
-  Readers list a moved document once, as the new one. The old branch keeps
-  its edit history and remains the discussion branch.
+  Readers list a moved document once, as the new one, with a link back to
+  the old branch for its history. The old branch keeps its edit history and
+  remains the discussion branch.
 - **New documents** go to `doc/` from this ticket on.
 
 ## 7. Rules and readers
