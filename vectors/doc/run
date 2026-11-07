@@ -57,6 +57,18 @@ def check(d, case):
     for id_ in exp.get("no_edits", []):
         if raw(f'(doc-edit {wstr(dirn)} {wstr(id_)})') is not None:
             fails.append(f"edit ..{id_[-2:]} should not exist")
+    for b, want in exp.get("links", {}).items():
+        got = [r.split(" ", 1) for r in (raw(f'(map (lambda (l) (string-append (list-get l 0) " " (list-get l 1))) (doc-links {wstr(dirn)} {wstr(b)}))') or [])]
+        if got != want:
+            fails.append(f"links {b}: {got!r} != {want!r}")
+    for b, want in exp.get("backlinks", {}).items():
+        got = raw(f'(doc-backlinks {wstr(dirn)} {wstr(b)})') or []
+        if got != want:
+            fails.append(f"backlinks {b}: {got!r} != {want!r}")
+    for b, want in exp.get("wiki", {}).items():
+        got = (raw(f'(list (doc-wiki {wstr(dirn)} {wstr(b)}))') or [""])[0]
+        if got != want:
+            fails.append(f"wiki {b}: {got!r} != {want!r}")
     for what, fn in (("history", "doc-history"), ("comments", "doc-comments")):
         for b, secs in exp.get(what, {}).items():
             for sec, want in secs.items():

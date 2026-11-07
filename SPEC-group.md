@@ -112,7 +112,7 @@ a chat branch for its discussion.
 
 | kind | headers | text |
 |---|---|---|
-| `doc.set` | `from`, `key K` | the value; keys `title`, `status` (`draft`, `decided`), `group` (a group name), `branch` (the discussion branch) |
+| `doc.set` | `from`, `key K` | the value; keys `title`, `status` (`draft`, `decided`), `group` (a group name), `branch` (the discussion branch), `wiki` (a topic, SPEC-doc 5) |
 | `doc.edit` | `from`, `sec S`, `title T`, `after S2` (optional) | the section's body |
 
 - **The model** is SPEC-doc 2 and 3, with the document taken from the scope

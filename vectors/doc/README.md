@@ -17,5 +17,8 @@ field/docmodel.wisp; `lib/chat-vectors doc` checks lib/chat.
 | `history` | `{name: {sec: [ids]}}`, in arrival order |
 | `comments` | `{name: {sec: [ids]}}`, in arrival order |
 | `resolved` | `{root id: "yes", "no" or ""}` |
+| `links` | `{name: [[D, S], ...]}`: the document's links (SPEC-doc 5), `S` empty for `[[D]]`, sorted |
+| `backlinks` | `{name: [names]}`: the documents linking to it, sorted |
+| `wiki` | `{name: topic}`: its `wiki` value, empty if none |
 
 Compare everything exactly, lists in order.

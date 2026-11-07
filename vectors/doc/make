@@ -158,5 +158,35 @@ cases.append({"name": "doc-scope", "about": "a document in scope doc/<D>: doc.se
              "comments": {D: {"net": ids(c, 11)}, "policy-talk": {"net": ids(c, 13)}},
              "resolved": {eid(c, 11): "yes"}}})
 
+# 9: links, backlinks and wiki topics (SPEC-doc 5)
+c = 7
+dset = lambda n, t, d, k, v: event(c, n, "doc.set", t, [], [("from", "colin"), ("key", k)], v, scope="doc/" + d)
+dedit = lambda n, t, par, d, sec, title, text, who="tova": event(c, n, "doc.edit", t, par,
+    [("from", who), ("sec", sec), ("title", title)], text, scope="doc/" + d)
+evs = [dset(1, 0, "guide", "title", "Guide"), dset(2, 0, "guide", "wiki", "start"),
+       dset(3, 0, "env", "title", "Environment"), dset(4, 0, "env", "wiki", "ops"), dset(5, 1, "env", "wiki", "reference"),
+       dedit(6, 2, [], "guide", "intro", "Intro",
+             "See [[env]] and [[env#ports]], also [[old]] and [[nope]].\n"
+             "Not links: [[Bad Name]], [[env#]], [[a#b#c]], `[[incode]]`, a ` lone backtick [[env]]."),
+       dedit(7, 3, [], "guide", "code", "Code", "```\n[[fenced]]\n```\nafter the block: [[legacy]]"),
+       dedit(8, 4, [], "guide", "gone", "Gone", "[[removed-target]]"),
+       dedit(9, 5, ids(c, 8), "guide", "gone", "", ""),
+       dedit(10, 6, [], "env", "a", "A", "base"),
+       dedit(11, 7, ids(c, 10), "env", "a", "A", "back to [[guide]]", who="sage"),
+       dedit(12, 7, ids(c, 10), "env", "a", "A", "see [[old#s1]]", who="ada"),
+       dedit(13, 8, [], "env", "b", "B", "myself: [[env]]"),
+       event(c, 14, "chat.set", 0, [], [("from", "colin"), ("branch", "old"), ("key", "doc")], "Old notes"),
+       edit(c, 15, 9, [], "old", "s1", "S1", "up to [[guide#intro]]"),
+       event(c, 16, "chat.set", 0, [], [("from", "colin"), ("branch", "legacy"), ("key", "doc")], "Legacy"),
+       event(c, 17, "chat.set", 0, [], [("from", "colin"), ("branch", "legacy"), ("key", "doc-moved")], "env")]
+cases.append({"name": "links", "about": "[[D]] and [[D#S]] in every head of every section not removed, outside code; links resolve as a document address (a moved branch to its new document, an unknown name to nothing); backlinks leave out the document itself; doc.set wiki is newest-wins",
+  "events": evs,
+  "expect": {"docs": [["doc/env", "Environment", "draft"], ["doc/guide", "Guide", "draft"], ["old", "Old notes", "draft"]],
+             "links": {"doc/guide": [["env", ""], ["env", "ports"], ["legacy", ""], ["nope", ""], ["old", ""]],
+                       "doc/env": [["env", ""], ["guide", ""], ["old", "s1"]],
+                       "old": [["guide", "intro"]]},
+             "backlinks": {"doc/env": ["doc/guide"], "doc/guide": ["doc/env", "old"], "old": ["doc/env", "doc/guide"]},
+             "wiki": {"doc/guide": "start", "doc/env": "reference", "old": ""}}})
+
 for i, case in enumerate(cases, 1):
     (HERE / f"{i:02d}-{case['name']}.json").write_text(json.dumps(case, indent=1) + "\n")

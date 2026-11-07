@@ -9,7 +9,7 @@ Documents are a reading of chat events (field/SPEC-chat.md), plus one new
 kind, `chat.edit`. Everything is in scope `chat/main`, signed by node-chat
 like any chat event. Readers: `field/docmodel.wisp` (with the vectors in
 `field/vectors/doc/`), `lib/chat` (the `doc` verbs) and `site/public/chat.js`
-(`/today/docs`).
+(`/personal/docs`).
 
 **Since ticket 0074** a new document lives in its own scope, `doc/<D>`, with a
 group and a discussion branch (field/SPEC-group.md 6): `doc.set` instead of
@@ -107,3 +107,61 @@ first edit's counts). A resolve MUST be a reply to the comment itself.
 
 A reader MUST pass every case in `field/vectors/doc/` (format in its README;
 `field/vectors/doc/run` checks docmodel.wisp, `lib/chat-vectors` lib/chat).
+
+## 5. Text, links and the wiki
+
+Since ticket 0077 (2026-11-07). A section's body is text in a small
+markdown subset, and a document can link to another. Nothing here changes
+the events; it is how readers show the text, and what they compute from it.
+
+**Formatting.** A reader that draws the text (site/public/chat.js) reads it
+line by line:
+
+- A line that starts with three backticks opens a code block, and the next
+  such line closes it (or the end of the text). The lines between are shown
+  as they are, in a monospace block. What follows the backticks on the
+  opening line is ignored.
+- `# `, `## ` and `### ` at the start of a line make a heading, one level
+  below the section's own heading.
+- `- ` or `* ` at the start of a line is an item of a bulleted list, `1. `
+  (any digits, a dot and a space) of a numbered list. Consecutive items form
+  one list.
+- Other lines are text; a blank line ends a paragraph, and a single line
+  break inside one is kept.
+- Inside text, headings and items: `` `code` `` (to the next backtick on the
+  line), `**bold**`, `*emphasis*`, `[label](URL)` where URL starts with
+  `https://` or `/` (anything else, such as `javascript:`, `data:` or
+  `http:`, is not a link and shows as written; an outside link opens with
+  `rel="noreferrer"`), a bare `http(s)://` URL (it ends before a
+  space, `<`, `>`, `"` or `&`, and not on `.,;:!?)]`), and the links below.
+- Nothing else is markup. Raw HTML is never passed through: every other
+  character is shown as written (escaped).
+
+Readers that show plain text (lib/chat) MAY show the text as it is.
+
+**Links.** `[[D]]` links to document `D`, and `[[D#S]]` to its section `S`,
+where `D` and `S` are names (SPEC-chat 5.1). Anything else between `[[` and
+the next `]]` is not a link. Links inside code do not count: a code block, or a
+span from a backtick to the next backtick on the same line (a backtick with
+no partner on its line is an ordinary character).
+
+- **A document's links** are the `(D, S)` pairs (`S` empty for `[[D]]`) in
+  the text of every head of every section that is not removed (section 3),
+  without repeats, sorted by `D` then `S` as strings.
+- **A link resolves** to the document a reader shows at that name:
+  `doc/D` if that is a document (it has a title); else, if branch `D` has
+  `doc-moved M` and `doc/M` is a document, `doc/M`; else branch `D` if it
+  is an older document (state `doc` not empty); else to nothing.
+- **A document's backlinks** ("linked from") are the other documents that
+  have a link resolving to it, without repeats, sorted by name. A link to
+  itself is not a backlink.
+
+A reader draws a link as a link to the document (`/personal/docs/D`, the
+section's anchor for `[[D#S]]`). One that resolves to nothing is drawn
+as a missing link, wiki style, so a page can link to one not written yet.
+
+**The wiki.** `doc.set` key `wiki` (newest wins, like the others) gives a
+document in `doc/` a topic; a document whose `wiki` is empty is not a wiki
+page. The browser lists the wiki pages by topic at `/personal/docs/wiki`,
+with a search over every document's title and the text of its sections.
+`wiki` is therefore not a name for a new document (`lib/chat` refuses it).
