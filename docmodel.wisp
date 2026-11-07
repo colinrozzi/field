@@ -5,7 +5,7 @@
 ;   (doc-add dir id scope kind text)   text: the canonical text (no sig line)
 ;
 ; and ask: doc-list, doc-sections, doc-edit, doc-history, doc-comments,
-; doc-resolved. Under `dir`:
+; doc-resolved, and (SPEC-doc 5) doc-links, doc-backlinks, doc-wiki. Under `dir`:
 ;
 ;   <dir>/e/<id>                    an edit: "<time> <b> <sec> <from>\n<parents>\n<after>\n<title>\n<text>"
 ;   <dir>/d/<b>/secs                section names, in arrival order
@@ -17,7 +17,8 @@
 ;                                   doc.set values; st/<key> is "<time> <id>" of the set
 ; A document is named by its branch, or doc/<D> for one in its own scope.
 (module docmodel
-  (provide doc-add doc-list doc-sections doc-edit doc-history doc-comments doc-resolved doc-start)
+  (provide doc-add doc-list doc-sections doc-edit doc-history doc-comments doc-resolved doc-start
+           doc-links doc-backlinks doc-wiki doc-resolve)
   (require list "std/list.wisp")
   (require chatmodel "experiment/field/chatmodel.wisp")
 
@@ -74,10 +75,10 @@
                 (if (string=? kind "doc.set") (add-set dir id c hdr (rest-of scope 4) (list-get h 1)) ""))
               "")))))))
 
-  ; doc.set: title, status, group or branch; the newest (time, id) wins
+  ; doc.set: title, status, group, branch or wiki; the newest (time, id) wins
   (define add-set (lambda (dir id c hdr d v)
     (let (k (hdr "key"))
-      (if (not (in? k (list "title" "status" "group" "branch"))) ""
+      (if (not (in? k (list "title" "status" "group" "branch" "wiki"))) ""
         (let (st (string-append dir "/ds/" d "/st"))
           (begin
             (fs-mkdir (string-append dir "/ds/" d)) (fs-mkdir st)
@@ -188,6 +189,76 @@
             (let (reached (walk walk "" (list)))
               (map (lambda (s) (let (hs (heads dir b s)) (list s hs (removed dir hs))))
                    (append reached (sort chat-str-lt (filter (lambda (s) (not (in? s reached))) secs)))))))))))
+
+  ; ── links and the wiki (SPEC-doc 5) ───────────────────────────────────
+  (define b-tick (string-ref "`" 0))
+  (define b-lb (string-ref "[" 0))
+  (define b-rb (string-ref "]" 0))
+  (define b-hash (string-ref "#" 0))
+  ; a line without its code spans: each from a backtick to the next one on
+  ; the line (a backtick with no partner stays)
+  (define strip-code (lambda (s i acc)
+    (let (a (string-index s b-tick i))
+      (if (< a 0) (string-append acc (rest-of s i))
+        (let (z (string-index s b-tick (+ a 1)))
+          (if (< z 0) (string-append acc (rest-of s i))
+            (strip-code s (+ z 1) (string-append acc (substring s i a)))))))))
+  ; the index of the next "]]" from i, or -1
+  (define find-close (lambda (s i)
+    (let (k (string-index s b-rb i))
+      (if (or (< k 0) (<= (string-len s) (+ k 1))) -1
+        (if (= (string-ref s (+ k 1)) b-rb) k (find-close s (+ k 1)))))))
+  ; inner text of [[...]] -> "D S" (S empty for [[D]]), or "" when not a link
+  (define link-key (lambda (inner)
+    (let (h (string-index inner b-hash 0))
+      (if (< h 0) (if (= (chat-name? inner) 1) (string-append inner " ") "")
+        (let (d (substring inner 0 h))
+          (let (sec (rest-of inner (+ h 1)))
+            (if (and (= (chat-name? d) 1) (= (chat-name? sec) 1)) (string-append d " " sec) "")))))))
+  (define line-links (lambda (s i acc)
+    (let (a (string-index s b-lb i))
+      (if (or (< a 0) (<= (string-len s) (+ a 1))) acc
+        (if (not (= (string-ref s (+ a 1)) b-lb)) (line-links s (+ a 1) acc)
+          (let (z (find-close s (+ a 2)))
+            (if (< z 0) acc
+              (let (k (link-key (substring s (+ a 2) z)))
+                (line-links s (+ z 2) (if (or (string=? k "") (in? k acc)) acc (list-push acc k)))))))))))
+  ; the links in a text, outside code blocks and spans, as "D S" keys
+  (define text-links (lambda (text)
+    (list-get
+      (fold (lambda (st line)
+              (if (= (has-prefix line "```") 1) (list (list-get st 0) (if (= (list-get st 1) 1) 0 1))
+                (if (= (list-get st 1) 1) st
+                  (list (line-links (strip-code line 0 "") 0 (list-get st 0)) 0))))
+            (list (list) 0) (split-on text b-nl 0 (list)))
+      0)))
+  ; a document's links: (list (list D S) ...), sorted, from every head of
+  ; every section not removed
+  (define doc-links (lambda (dir b)
+    (map (lambda (k) (let (sp (string-index k b-space 0)) (list (substring k 0 sp) (rest-of k (+ sp 1)))))
+      (sort chat-str-lt
+        (fold (lambda (acc x)
+                (if (list-get x 2) acc
+                  (fold (lambda (a h) (fold (lambda (a2 k) (if (in? k a2) a2 (list-push a2 k))) a (text-links (list-get (doc-edit dir h) 7))))
+                        acc (list-get x 1))))
+              (list) (doc-sections dir b))))))
+  ; the document [[name]] resolves to, or ""
+  (define doc-resolve (lambda (dir name)
+    (if (= (chat-name? name) 0) ""
+      (if (not (string=? (read-or (string-append dir "/ds/" name "/title") "") "")) (string-append "doc/" name)
+        (let (mv (read-or (string-append dir "/b/" name "/state/doc-moved") ""))
+          (if (and (not (string=? mv "")) (not (string=? (read-or (string-append dir "/ds/" mv "/title") "") "")))
+            (string-append "doc/" mv)
+            (if (string=? (read-or (string-append dir "/b/" name "/state/doc") "") "") "" name)))))))
+  ; the other documents with a link resolving to key, sorted by name
+  (define doc-backlinks (lambda (dir key)
+    (filter (lambda (k)
+              (and (not (string=? k key))
+                   (< 0 (length (filter (lambda (l) (string=? (doc-resolve dir (list-get l 0)) key)) (doc-links dir k))))))
+            (map car (doc-list dir)))))
+  ; a doc/<D> document's wiki topic, or ""
+  (define doc-wiki (lambda (dir key)
+    (if (= (has-prefix key "doc/") 1) (read-or (string-append dir "/ds/" (rest-of key 4) "/wiki") "") "")))
 
   (define doc-history (lambda (dir b s) (set-of (spath dir b s "history"))))
   (define doc-comments (lambda (dir b s) (set-of (cpath dir b s))))
