@@ -75,13 +75,25 @@
             (if (< x y) 1 (if (< y x) 0 (str-lt-from a b (+ i 1))))))))))
   (define str-lt (lambda (a b) (str-lt-from a b 0)))
 
-  (define insert-sorted (lambda (x xs)
-    (if (null? xs) (list x)
-      (if (str-lt x (car xs)) (cons x xs)
-        (if (string=? x (car xs)) xs   ; a set: drop duplicates
-          (cons (car xs) (insert-sorted x (cdr xs))))))))
+  ; A set of strings in byte order (str-lt), duplicates dropped. Merge sort
+  ; nests only log2(n) deep and the dedupe is a tail loop; insertion by
+  ; recursion nested once per element and passed the evaluator's limit of 128
+  ; (0088). Now the step budget is the bound: one field-append fits about 200
+  ; parents (measured 2026-11-08).
+  (define dedupe-from (lambda (xs i n out)
+    (if (= i n) out
+      (dedupe-from xs (+ i 1) n
+        (if (and (> i 0) (string=? (list-get xs i) (list-get xs (- i 1)))) out
+          (list-push out (list-get xs i)))))))
+  (define ascending-from (lambda (xs i n)
+    (if (>= (+ i 1) n) 1
+      (if (= (str-lt (list-get xs i) (list-get xs (+ i 1))) 1) (ascending-from xs (+ i 1) n) 0))))
+  ; An event read back lists its parents and links this way already, so
+  ; checking one costs a linear pass, not a sort.
   (define sort-set (lambda (xs)
-    (fold (lambda (acc x) (insert-sorted x acc)) (list) xs)))
+    (if (= (ascending-from xs 0 (length xs)) 1) xs
+      (let (sorted (sort str-lt xs))
+        (dedupe-from sorted 0 (length sorted) (list))))))
 
   ; ── keys ──────────────────────────────────────────────────────────────
   (define sha-of (lambda (text) (sha256 text)))
@@ -266,10 +278,11 @@
             (id-may-write IDS (substring (event-scope e) 3 (string-len (event-scope e))) (event-author e) (registrars (event-scope e)))
             (if (null? (filter (lambda (r) (admits r e)) rs)) 0 1)))))))
 
-  (define missing-parents (lambda (ps)
-    (if (null? ps) (list)
-      (if (= (field-exists (car ps)) 1) (missing-parents (cdr ps))
-        (cons (car ps) (missing-parents (cdr ps)))))))
+  ; the parents in ps we do not hold, in order (a tail loop: 0088)
+  (define missing-from (lambda (ps out)
+    (if (null? ps) out
+      (missing-from (cdr ps) (if (= (field-exists (car ps)) 1) out (list-push out (car ps)))))))
+  (define missing-parents (lambda (ps) (missing-from ps (list))))
 
   ; A complete event from anywhere: its text and signature -> its id, or
   ; "error: ...". Admitting one we already hold is a no-op, so duplicates cost
