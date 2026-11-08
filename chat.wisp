@@ -1,9 +1,10 @@
 ; chat.wisp — post chat events into this machine's field store (see
 ; field/CHAT.md). lib/chat is the client; this signs, since keys stay in the
 ; daemon. Who wrote an event is the body's first line, "from NAME"; it is
-; signed with NAME's key id.NAME if this daemon holds one (field/SPEC-id.md),
-; else with the "chat" key. Anyone who can reach this port can write as any
-; name whose key is here: the trust is this machine's.
+; signed with NAME's key id.NAME, and refused if this daemon has none
+; (field/SPEC-id.md; `lib/chat ME id-new NAME` makes one). Anyone who can
+; reach this port can write as any name whose key is here: the trust is this
+; machine's.
 ;
 ;   post <len>\n<thread>\n<kind>\n<body>   -> "ok <len>\n<id>" or "err <len>\n<why>"
 ;   send <len>\n<thread>\n<kind>\n<parent ids, space-separated, or ->\n<body>
@@ -52,13 +53,13 @@
         (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/"
           (if (and (< 3 (string-len k)) (string=? (substring k 0 3) "id.")) "id/" ""))))))
   ; id.* is signed by the registrar, this node's own key. The rest by the
-  ; key of the body's `from`, id.<from>, if this daemon holds it
-  ; (field/SPEC-id.md 5), else by "chat" (until rules step C).
+  ; key of the body's `from`, id.<from> (field/SPEC-id.md 5), or "" if this
+  ; daemon holds none: the chat keys stopped at rules step C.
   (define signer (lambda (kind body)
     (if (string=? (scope-for kind) "id/") (match (fs-read-text "field/node") ((ok n) n) ((err e) "no-node-name"))
       (let (from (from-of body))
-        (if (string=? from "") "chat"
-          (match (key-public (string-append "id." from)) ((ok p) (string-append "id." from)) ((err e) "chat")))))))
+        (if (string=? from "") ""
+          (match (key-public (string-append "id." from)) ((ok p) (string-append "id." from)) ((err e) "")))))))
   ; the body's `from` header: its first line, "from NAME"
   (define from-of (lambda (body)
     (let (j (string-index body b-nl 0))
@@ -100,11 +101,13 @@
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
+                    (if (string=? (signer kind (substring p (+ k 1) (string-len p))) "")
+                      (reply "err" (string-append "no key for from " (from-of (substring p (+ k 1) (string-len p))) " on this daemon (lib/chat ME id-new NAME)"))
                     (let (r (field-post-to FIELD (signer kind (substring p (+ k 1) (string-len p))) (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
                                         (id-body kind thread (substring p (+ k 1) (string-len p)))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         (list)))
-                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))))
+                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r))))))))))))))))
 
   ; Handle every complete request in buf -> what's left.
   (define drain (lambda (cid buf)
