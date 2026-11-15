@@ -60,6 +60,13 @@ number. **The text** is an in-order walk of the tree: a node's left children
 (each with its subtree), leaving out the root and deleted characters.
 Deleted characters stay in the tree (tombstones).
 
+Both sides sort the same way, ascending by `(E, k)`. That ordering is what
+keeps concurrent runs whole. A run is a chain of right children
+(section 3), so when two runs are typed at one spot at once they are two
+siblings. Each sibling carries its whole run in its subtree, so the walk
+gives one run complete and then the other. The order only decides which run
+comes first.
+
 ## 3. Ops and how a reader applies them
 
 **`i P SIDE TEXT`**: insert. `P` is a reference, `SIDE` is `L` or `R`, and
@@ -99,6 +106,9 @@ changes nothing.
    - `d ^ N`.
 3. If `E` is invalid, **ignore the whole event**: no op of it is applied,
    and any later event that names one of its characters is invalid too.
+   The text shows nothing of it. A reader SHOULD log the event id and the
+   first failing line, so a broken writer is visible instead of being lost
+   without a trace.
 4. Otherwise apply its ops in line order.
 
 The node delivers every event after its parents (SPEC-node 5, step 6), so
@@ -121,7 +131,11 @@ offset `pos`:
 To delete the `n` visible characters from `pos`: group them, in text order,
 into stretches of consecutive ids of one event (`E:k`, `E:(k+1)`, ...); one
 `d E:k N` per stretch. A replace is the `d` lines, then the `i` line, with
-`L` taken after the delete (it is the same character). A reference to text
+`L` taken after the delete. It is the same character as before: the deleted
+characters were the ones from `pos` on, and `L` is the visible one just
+before `pos`, so the delete never removes it. `R`, though, is taken with
+tombstones included, so it is usually the first character just deleted.
+The insert then lands just before that tombstone, where the old text was. A reference to text
 the same event inserted is written `@:k`.
 
 Readers accept any parent and side; these rules decide only where an
