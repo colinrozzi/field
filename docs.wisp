@@ -15,9 +15,9 @@
 ;
 ; The models live in this session (Wisp maps, so a restart replays every
 ; doc.ops event from the store; snapshots are a later ticket, SPEC-text 5):
-;   STATE    (vector cursor models tips): the seen event followed up to, and maps
+;   STATE    (vector cursor models tips store): the seen event followed up to, maps
 ;            from D to its model (textmodel.wisp) and to its tips (doc.ops ids no
-;            later one names as a parent)
+;            later one names as a parent), and the store's address
 ;   field/docs/conn/<cid>    bytes of a request still arriving
 (module docs
   (provide docs-connection docs-data docs-closed docs-serve docs-catch-up docs-read DOCS-LISTEN)
@@ -45,7 +45,8 @@
   (define name-ok? (lambda (d)
     (and (< 0 (string-len d)) (< (string-index d b-space 0) 0)
          (< (string-index d (string-ref "/" 0) 0) 0) (not (string=? d ".")) (not (string=? d "..")))))
-  (define STATE (vector "" (hash-map) (hash-map)))
+  (define STATE (vector "" (hash-map) (hash-map) FIELD))
+  (define store (lambda () (vector-ref STATE 3)))
   (define got (lambda (o d) (match o ((some v) v) ((none) d))))
 
   ; ── following the store ───────────────────────────────────────────────
@@ -56,7 +57,7 @@
 
   ; one doc.ops event into its document's model and tips
   (define take-event (lambda (id)
-    (let (e (field-read FIELD id))
+    (let (e (field-read (store) id))
       (if (< (length e) 9) 0
         (let (scope (list-get e 3))
           (if (not (starts-with scope "doc/")) 0
@@ -70,7 +71,7 @@
 
   ; follow from the cursor to the store's head, a page at a time
   (define docs-catch-up (lambda ()
-    (let (r (field-after FIELD (vector-ref STATE 0) "" "doc.ops"))
+    (let (r (field-after (store) (vector-ref STATE 0) "" "doc.ops"))
       (begin
         (map (lambda (en) (take-event (list-get en 0))) (list-get r 1))
         (vector-set! STATE 0 (list-get r 0))
@@ -83,10 +84,10 @@
     (match (key-public (string-append "id." from)) ((ok p) (string-append "id." from)) ((err e) ""))))
 
   (define post-ops (lambda (d from ops)
-    (let (body (string-append "from " from "\n" ops))
+    (let (body (string-append "from " from "\n\n" ops))
       (if (string=? (signer from) "") (reply "err" (string-append "no key for from " from " on this daemon (lib/chat ME id-new NAME)"))
         (if (< MAX-BODY (string-len body)) (reply "err" "burst over 16384 bytes")
-          (let (r (field-post-to FIELD (signer from) (string-append "doc/" d) "doc.ops" body (tips-of d) (list)))
+          (let (r (field-post-to (store) (signer from) (string-append "doc/" d) "doc.ops" body (tips-of d) (list)))
             (if (= (string-len r) 64) (begin (docs-catch-up) (reply "ok" r)) (reply "err" r))))))))
 
   ; TODO: a diff over 16 KB goes as several bursts, each made on the last.
@@ -142,8 +143,10 @@
               "data")))))))
   (define docs-closed (lambda (e) (begin (fs-delete (conn-path (car e))) "closed")))
 
-  (define docs-serve (lambda (addr)
+  ; listen on addr; the store at store-addr (client.wisp's FIELD on this machine)
+  (define docs-serve (lambda (addr store-addr)
     (begin
+      (vector-set! STATE 3 store-addr)
       (map fs-mkdir (list "field/docs" "field/docs/conn"))
       (tcp-listen addr))))
 )
