@@ -128,7 +128,12 @@ and opens its thread in a panel on the right (`/today/chat/B/t/ID`), where
 any message can start a branch. Under a message are the branches and
 tickets grown from it, with their status. A ticket's branch has a header
 with its number, title, a status select, agent, repo and PR. A box at the
-bottom (Ctrl+Enter sends). The page asks for new messages every 4 seconds,
+bottom (Ctrl+Enter sends); its + button, a paste or a drop attaches files
+(PNG, JPEG, GIF, WebP, PDF, text, up to 10 MB each, ticket 0133): live.wisp
+stores each as a blob (SPEC-node 7.1, a JPEG without its EXIF), the message
+links it and names it in `file` lines (SPEC-chat 4.1), images show inline
+and the rest as downloads, and the peers copy the blobs to the desktop,
+where `lib/chat ME fetch ID` saves them for agents. The page asks for new messages every 4 seconds,
 and leaves the list alone while you are typing in it. `/today/tickets` lists
 every ticket by status. server3's `node-chat` signs what you write, `from colin`, and
 the peers carry it to the desktop in well under a second. A message that

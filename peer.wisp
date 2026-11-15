@@ -24,8 +24,15 @@
 ;
 ;   field/peers/<name>         the cursor: the last remote seen event we finished
 ;   field/peers/<name>.watch   the open watch connection's id, or nothing
+;   field/peers/<name>.blobs   blobs (sha256 lines) an admitted event links that
+;                              could not be fetched yet; tried again each pull
+;
+; Blobs (SPEC-node 7.1): after admitting an event, the blobs it links (link
+; blob <sha256> ...) that this store lacks are fetched from the remote with
+; "blob <sha256>" and kept only if they hash to that name.
 (module peer
   (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch)
+  (require store "experiment/field/store.wisp")
 
   (define PULLS 8)   ; pages per peer-pull call
 
@@ -154,6 +161,40 @@
     (if (null? wants) 1
       (if (= (has-prefix scope (car wants)) 1) 1 (wanted? scope (cdr wants))))))
 
+  ; ── blobs ─────────────────────────────────────────────────────────────
+  ; the sha256s an event file's "link blob <sha256> ..." lines name (they come
+  ; before its body line)
+  (define blob-links (lambda (file i acc)
+    (let (j (find-byte file b-nl i))
+      (if (< j 0) acc
+        (let (l (substring file i j))
+          (if (= (has-prefix l "body ") 1) acc
+            (blob-links file (+ j 1)
+              (if (= (has-prefix l "link blob ") 1)
+                (let (w (split-from l b-space 0 (list))) (if (< 2 (length w)) (list-push acc (list-get w 2)) acc))
+                acc))))))))
+  (define blobs-path (lambda (name) (string-append "field/peers/" name ".blobs")))
+  ; fetch one blob from remote unless it is here -> 1 when it is here after
+  (define fetch-blob (lambda (remote h)
+    (if (= (field-blob-exists h) 1) 1
+      (let (r (peer-request remote (string-append "blob " h "\n")))
+        (if (= (list-get r 0) 0) 0
+          (if (string=? (sha256 (list-get r 1)) h)
+            (if (string=? (field-blob-put (list-get r 1)) h) 1 0)
+            0))))))
+  ; fetch each of hs; -> the ones still missing
+  (define fetch-blobs (lambda (remote hs out)
+    (if (null? hs) out
+      (fetch-blobs remote (cdr hs) (if (= (fetch-blob remote (car hs)) 1) out (list-push out (car hs)))))))
+  (define push-all (lambda (xs ys) (if (null? ys) xs (push-all (list-push xs (car ys)) (cdr ys)))))
+  (define join-lines (lambda (xs acc) (if (null? xs) acc (join-lines (cdr xs) (string-append acc (car xs) "\n")))))
+  ; try the pending ones again, plus hs -> nothing; what is still missing stays pending
+  (define settle-blobs (lambda (name remote hs)
+    (let (pend (split-from (match (fs-read-text (blobs-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list)))
+      (let (all (push-all pend hs))
+        (if (null? all) "none"
+          (fs-write (blobs-path name) (join-lines (fetch-blobs remote all (list)) "")))))))
+
   ; admit the records of a pull payload p from i -> "" or the error
   (define admit-records (lambda (local p i wants)
     (if (>= i (string-len p)) ""
@@ -166,6 +207,16 @@
                   (let (r (if (= (wanted? (list-get w 1) wants) 1)
                             (admit-file local (substring p (+ j 1) end)) ""))
                     (if (string=? r "") (admit-records local p end wants) r)))))))))))
+  ; the blobs the wanted records of p from i link, added to acc
+  (define record-blobs (lambda (p i wants acc)
+    (let (j (find-byte p b-nl i))
+      (if (< j 0) acc
+        (let (w (split-from (substring p i j) b-space 0 (list)))
+          (if (< (length w) 4) acc
+            (let (end (+ (+ j 1) (digits-from (list-get w 3) 0 0)))
+              (if (< (string-len p) end) acc
+                (record-blobs p end wants
+                  (if (= (wanted? (list-get w 1) wants) 1) (blob-links (substring p (+ j 1) end) 0 acc) acc))))))))))
 
   (define pull-on (lambda (name remote local wants k)
     (let (after (peer-state name))
@@ -176,9 +227,10 @@
             (let (j (find-byte p b-nl 0))
               (let (head (split-from (substring p 0 j) b-space 0 (list)))
                 (let (cursor (list-get head 0))
-                  (if (or (string=? cursor "-") (string=? cursor after)) "idle"
+                  (if (or (string=? cursor "-") (string=? cursor after)) (begin (settle-blobs name remote (list)) "idle")
                     (if (string=? (admit-records local p (+ j 1) wants) "")
                       (begin
+                        (settle-blobs name remote (record-blobs p (+ j 1) wants (list)))
                         (fs-write-durable (cursor-path name) cursor)
                         (if (string=? (list-get head 1) "1")
                           (if (< 1 k) (pull-on name remote local wants (- k 1)) "more")
