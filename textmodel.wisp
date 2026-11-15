@@ -29,7 +29,7 @@
 ; (1: deleted, kept as a tombstone).
 (module textmodel
   (provide text-new text-apply text-string text-ops text-save text-load
-           text-parse text-escape text-unescape text-diff)
+           text-parse text-escape text-unescape text-diff cp-len cp-sub)
   (require list "std/list.wisp")
   (require str "std/str.wisp")
 
@@ -39,6 +39,22 @@
   (define b-n (string-ref "n" 0))
   (define rest-of (lambda (s i) (substring s i (string-len s))))
   (define min (lambda (a b) (if (< a b) a b)))
+
+  ; ── code points ───────────────────────────────────────────────────────
+  ; Characters are Unicode code points; Wisp strings are UTF-8 bytes.
+  (define cp-width (lambda (b)
+    (let (n (s32 b)) (if (< n 128) 1 (if (< n 224) 2 (if (< n 240) 3 4))))))
+  ; the byte index of code point k in s (string-len s past the end)
+  (define cp-byte-from (lambda (s k i)
+    (if (or (= k 0) (>= i (string-len s))) i
+      (cp-byte-from s (- k 1) (+ i (cp-width (string-ref s i)))))))
+  (define cp-byte (lambda (s k) (cp-byte-from s k 0)))
+  (define cp-len-from (lambda (s i n)
+    (if (>= i (string-len s)) n (cp-len-from s (+ i (cp-width (string-ref s i))) (+ n 1)))))
+  (define cp-len (lambda (s) (cp-len-from s 0 0)))
+  ; code points a..b of s
+  (define cp-sub (lambda (s a b)
+    (let (i (cp-byte s a)) (substring s i (+ i (cp-byte (rest-of s i) (- b a)))))))
 
   ; ── escapes ───────────────────────────────────────────────────────────
   (define escape-from (lambda (s i out)
@@ -112,9 +128,15 @@
   (define suffix-len (lambda (a b i n)
     (if (or (= i n) (not (= (string-ref a (- (string-len a) (+ i 1))) (string-ref b (- (string-len b) (+ i 1))))))
       i (suffix-len a b (+ i 1) n))))
+  ; byte i of s continues a code point (so isn't a boundary)
+  (define cont? (lambda (s i)
+    (and (< i (string-len s)) (let (n (s32 (string-ref s i))) (and (<= 128 n) (< n 192))))))
+  (define snap-down (lambda (s i) (if (cont? s i) (snap-down s (- i 1)) i)))
+  (define snap-suffix (lambda (s n) (if (cont? s (- (string-len s) n)) (snap-suffix s (- n 1)) n)))
+  ; in bytes, on code point boundaries
   (define text-diff (lambda (a b)
-    (let (p (prefix-len a b 0 (min (string-len a) (string-len b))))
-      (let (s (suffix-len a b 0 (- (min (string-len a) (string-len b)) p)))
+    (let (p (snap-down a (prefix-len a b 0 (min (string-len a) (string-len b)))))
+      (let (s (snap-suffix a (suffix-len a b 0 (- (min (string-len a) (string-len b)) p))))
         (list p (- (string-len a) (+ p s)) (substring b p (- (string-len b) s)))))))
 
   ; TODO(0122): the diff as op lines, with the character ids at its ends.
