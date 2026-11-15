@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Check field/textmodel.wisp against the text vectors (README.md here).
+
+    systemd-run --user --scope -p MemoryMax=4G field/vectors/text/run [CASE.json ...]
+
+Uses field/vectors/chat/run's private daemon (its own port and filesystem
+root; nothing touches the real node). A reader case applies its events in
+every listed order, from an empty model each time, and checks `expect`; a
+writer case builds the state, then checks each write's ops, the text after
+it, and the merge of all of them. Prints each case's time.
+"""
+import hashlib, importlib.machinery, importlib.util, json, sys, time
+
+sys.dont_write_bytecode = True
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+_loader = importlib.machinery.SourceFileLoader("chatrun", str(HERE.parent / "chat" / "run"))
+_spec = importlib.util.spec_from_loader("chatrun", _loader)
+chatrun = importlib.util.module_from_spec(_spec)
+_loader.exec_module(chatrun)
+wstr, F, L = chatrun.wstr, chatrun.F, chatrun.L
+
+
+def body_of(file_text):
+    return file_text.split("\nbody ", 1)[1].split("\n", 1)[1]
+
+
+def load_events(d, case):
+    """The case's events as a session list ev of (id body). Bodies go through
+    files in the daemon's root: an eval's source is limited in size."""
+    d.eval("(define ev (list))")
+    (d.tmp / "root" / "textvec").mkdir(exist_ok=True)
+    for i, (id_, _, _, text) in enumerate(case["events"]):
+        (d.tmp / "root" / "textvec" / str(i)).write_text(body_of(text))
+        d.eval(f'(begin (define ev (list-push ev (list {wstr(id_)} (match (fs-read-text "textvec/{i}") ((ok t) t) ((err e) e))))) 0)')
+
+
+def apply_order(d, order):
+    d.eval("(begin (define m (text-new)) 0)")
+    for i in order:
+        d.eval(f"(begin (define m (text-apply m (car (list-get ev {i})) (list-get (list-get ev {i}) 1))) 0)")
+
+
+def state(d, cursor=True):
+    out = d.eval(f'''(string-append (text-string m) "{F}"
+      {'(fold (lambda (a x) (string-append a x "' + L + '")) "" (text-ids m))' if cursor else '""'} "{F}"
+      (fold (lambda (a x) (string-append a x "{L}")) "" (text-invalid m)) "{F}"
+      {"(fold (lambda (a x) (string-append a (car x) \" \" (num->str (list-get x 1)) \"" + L + "\")) \"\" (text-cursor m))" if cursor else '""'})''')
+    text, ids, inv, cur = out.split(F)
+    sp = lambda s: [x for x in s.split(L) if x]
+    return text, sp(ids), sorted(sp(inv)), {x.split(" ")[0]: int(x.split(" ")[1]) for x in sp(cur)}
+
+
+def check_reader(d, case):
+    exp, fails = case["expect"], []
+    load_events(d, case)
+    big = "length" in exp
+    for order in case["orders"]:
+        t0 = time.time()
+        apply_order(d, order)
+        if big:
+            print(f"     applied {len(order)} events in {time.time() - t0:.1f}s")
+        text, ids, inv, cur = state(d, cursor=not big)
+        got = {"invalid": inv}
+        if big:
+            cps = list(text)
+            got.update(length=len(cps), sha256=hashlib.sha256(text.encode()).hexdigest(),
+                       start="".join(cps[:80]), end="".join(cps[-80:]))
+        else:
+            got.update(text=text, ids=ids, cursor=cur)
+        for k, v in exp.items():
+            if got[k] != v:
+                fails.append(f"order {order}: {k}: {str(got[k])[:200]!r} != {str(v)[:200]!r}")
+        if fails:
+            break
+    return fails
+
+
+def ops_of(d):
+    out = d.eval(f'(fold (lambda (a x) (string-append a x "{L}")) "" ops)')
+    return [x for x in out.split(L) if x]
+
+
+def check_writer(d, case):
+    exp, fails = case["expect"], []
+    load_events(d, case)
+    apply_order(d, range(len(case["events"])))
+    d.eval("(begin (define s m) 0)")
+    if d.eval("(text-string s)") != exp["text"]:
+        fails.append(f"text: {d.eval('(text-string s)')!r} != {exp['text']!r}")
+    bodies = []
+    for w, want_ops, want_after in zip(case["writes"], exp["ops"], exp["after"]):
+        d.eval(f'(define ops (text-edit s {w["pos"]} {w["delete"]} {wstr(w["insert"])}))')
+        got = ops_of(d)
+        if got != want_ops:
+            fails.append(f"ops {w['id'][-2:]}: {got!r} != {want_ops!r}")
+        body = f"from {w['from']}\n\n" + "\n".join(got)
+        bodies.append((w["id"], body))
+        after = d.eval(f"(text-string (text-apply (text-copy s) {wstr(w['id'])} {wstr(body)}))")
+        if after != want_after:
+            fails.append(f"after {w['id'][-2:]}: {after!r} != {want_after!r}")
+    d.eval("(begin (define m (text-copy s)) 0)")
+    for id_, body in bodies:
+        d.eval(f"(begin (define m (text-apply m {wstr(id_)} {wstr(body)})) 0)")
+    merged = d.eval("(text-string m)")
+    if merged != exp["merged"]:
+        fails.append(f"merged: {merged!r} != {exp['merged']!r}")
+    return fails
+
+
+def main():
+    files = [Path(a) for a in sys.argv[1:]] or sorted(HERE.glob("*.json"))
+    bad = 0
+    with chatrun.Daemon() as d:
+        d.eval("(step-limit 20000000)")
+        d.eval('(require textmodel "experiment/field/textmodel.wisp")')
+        for f in files:
+            case = json.loads(f.read_text())
+            t0 = time.time()
+            try:
+                fails = (check_writer if "writes" in case else check_reader)(d, case)
+            except RuntimeError as e:
+                fails = [f"error: {str(e)[:500]}"]
+            print(("ok   " if not fails else "FAIL ") + f"{f.name}  {time.time() - t0:.1f}s")
+            for x in fails:
+                print("     " + x)
+            bad += bool(fails)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()
