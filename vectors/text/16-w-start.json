@@ -1,0 +1,33 @@
+{
+ "name": "w-start",
+ "about": "at the start of a document: a left child of the first character",
+ "events": [
+  [
+   "e500000000000000000000000000000000000000000000000000000000000001",
+   "doc/plan",
+   "doc.ops",
+   "sig 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\nfield 1\nauthor c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20\nscope doc/plan\nkind doc.ops\ntime 1794700001000\nbody 29\nfrom colin\n\ni ^ R hello world"
+  ]
+ ],
+ "writes": [
+  {
+   "id": "e500000000000000000000000000000000000000000000000000000000000002",
+   "from": "colin",
+   "pos": 0,
+   "delete": 0,
+   "insert": "Oh, "
+  }
+ ],
+ "expect": {
+  "text": "hello world",
+  "ops": [
+   [
+    "i e500000000000000000000000000000000000000000000000000000000000001:0 L Oh, "
+   ]
+  ],
+  "after": [
+   "Oh, hello world"
+  ],
+  "merged": "Oh, hello world"
+ }
+}
