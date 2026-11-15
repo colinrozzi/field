@@ -18,3 +18,5 @@ chat/ id
 mail/ id
 group/ id
 doc/ id
+run/ id
+run/approve/ none

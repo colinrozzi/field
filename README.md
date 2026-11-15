@@ -16,6 +16,7 @@ Written in [Wisp](https://github.com/colinrozzi/wisp), run as sessions of a
 |---|---|
 | `SPEC-node.md` | the node: the event file byte for byte, scopes, admission, the seen chain, the TCP protocol, peers, the gate, conformance checks |
 | `SPEC-chat.md` | chat on the field: event bodies, the model (branches, threads, state, tickets), conformance |
+| `SPEC-run.md` | approve-and-run: agents propose host commands, colin approves from his phone with a key only it holds, a runner reports |
 | `DESIGN.md`, `CHAT.md` | why it is shaped this way, and how it was built |
 | `store.wisp`, `server.wisp` | a node: the store and its TCP server |
 | `peer.wisp` | following another node with `pull` |
