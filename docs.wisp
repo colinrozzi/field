@@ -13,9 +13,11 @@
 ; newest doc.ops events of D this service holds. Before answering, the
 ; service reads up to the store's head, so a read after a write sees it.
 ;
-;   field/docs/cursor        the seen event followed up to
-;   field/docs/m/<D>         D's model (text-save)
-;   field/docs/t/<D>         D's tips: doc.ops ids no later one names as parent
+; The models live in this session (Wisp maps, so a restart replays every
+; doc.ops event from the store; snapshots are a later ticket, SPEC-text 5):
+;   STATE    (vector cursor models tips): the seen event followed up to, and maps
+;            from D to its model (textmodel.wisp) and to its tips (doc.ops ids no
+;            later one names as a parent)
 ;   field/docs/conn/<cid>    bytes of a request still arriving
 (module docs
   (provide docs-connection docs-data docs-closed docs-serve docs-catch-up docs-read DOCS-LISTEN)
@@ -36,7 +38,6 @@
   (define join-lines (lambda (xs) (fold (lambda (acc x) (string-append acc x "\n")) "" xs)))
   (define in? (lambda (x xs) (= (member x xs string=?) 1)))
 
-  (define num->str (lambda (n) (number->string n)))
   (define reply (lambda (word payload)
     (string-append word " " (num->str (string-len payload)) "\n" payload)))
 
@@ -44,12 +45,14 @@
   (define name-ok? (lambda (d)
     (and (< 0 (string-len d)) (< (string-index d b-space 0) 0)
          (< (string-index d (string-ref "/" 0) 0) 0) (not (string=? d ".")) (not (string=? d "..")))))
-  (define mpath (lambda (d) (string-append "field/docs/m/" d)))
-  (define tpath (lambda (d) (string-append "field/docs/t/" d)))
+  (define STATE (vector "" (hash-map) (hash-map)))
+  (define got (lambda (o d) (match o ((some v) v) ((none) d))))
 
   ; ── following the store ───────────────────────────────────────────────
-  (define model-of (lambda (d) (text-load (read-or (mpath d) ""))))
-  (define tips-of (lambda (d) (lines (read-or (tpath d) ""))))
+  (define model-of (lambda (d)
+    (let (ms (vector-ref STATE 1))
+      (if (= (map-has? ms d) 1) (got (map-get ms d) 0) (map-set! ms d (text-new))))))
+  (define tips-of (lambda (d) (got (map-get (vector-ref STATE 2) d) (list))))
 
   ; one doc.ops event into its document's model and tips
   (define take-event (lambda (id)
@@ -60,17 +63,17 @@
             (let (d (rest-of scope 4))
               (if (not (name-ok? d)) 0
                 (begin
-                  (fs-write (mpath d) (text-save (text-apply (model-of d) id (list-get e 8))))
-                  (fs-write (tpath d)
-                    (join-lines (list-push (filter (lambda (t) (not (in? t (list-get e 6)))) (tips-of d)) id)))
+                  (text-apply (model-of d) id (list-get e 8))
+                  (map-set! (vector-ref STATE 2) d
+                    (list-push (filter (lambda (t) (not (in? t (list-get e 6)))) (tips-of d)) id))
                   1)))))))))
 
   ; follow from the cursor to the store's head, a page at a time
   (define docs-catch-up (lambda ()
-    (let (r (field-after FIELD (read-or "field/docs/cursor" "") "" "doc.ops"))
+    (let (r (field-after FIELD (vector-ref STATE 0) "" "doc.ops"))
       (begin
         (map (lambda (en) (take-event (list-get en 0))) (list-get r 1))
-        (fs-write "field/docs/cursor" (list-get r 0))
+        (vector-set! STATE 0 (list-get r 0))
         (if (= (list-get r 2) 1) (docs-catch-up) "caught up")))))
 
   (define docs-read (lambda (d) (begin (docs-catch-up) (text-string (model-of d)))))
@@ -89,7 +92,7 @@
   ; TODO: a diff over 16 KB goes as several bursts, each made on the last.
   (define do-write (lambda (d from text)
     (let (m (begin (docs-catch-up) (model-of d)))
-      (let (ops (text-ops m (text-string m) text))
+      (let (ops (text-ops m text))
         (if (null? ops) (reply "ok" "") (post-ops d from (join-lines ops)))))))
 
   ; ── requests ──────────────────────────────────────────────────────────
@@ -141,6 +144,6 @@
 
   (define docs-serve (lambda (addr)
     (begin
-      (map fs-mkdir (list "field/docs" "field/docs/m" "field/docs/t" "field/docs/conn"))
+      (map fs-mkdir (list "field/docs" "field/docs/conn"))
       (tcp-listen addr))))
 )

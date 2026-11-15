@@ -97,10 +97,10 @@ def check_writer(d, case):
             fails.append(f"ops {w['id'][-2:]}: {got!r} != {want_ops!r}")
         body = f"from {w['from']}\n\n" + "\n".join(got)
         bodies.append((w["id"], body))
-        after = d.eval(f"(text-string (text-apply s {wstr(w['id'])} {wstr(body)}))")
+        after = d.eval(f"(text-string (text-apply (text-copy s) {wstr(w['id'])} {wstr(body)}))")
         if after != want_after:
             fails.append(f"after {w['id'][-2:]}: {after!r} != {want_after!r}")
-    d.eval("(begin (define m s) 0)")
+    d.eval("(begin (define m (text-copy s)) 0)")
     for id_, body in bodies:
         d.eval(f"(begin (define m (text-apply m {wstr(id_)} {wstr(body)})) 0)")
     merged = d.eval("(text-string m)")
