@@ -44,6 +44,7 @@
   (define b-n (string-ref "n" 0))
   (define b-colon (string-ref ":" 0))
   (define b-zero (string-ref "0" 0))
+  (define b-minus (string-ref "-" 0))
   (define rest-of (lambda (s i) (substring s i (string-len s))))
   (define min (lambda (a b) (if (< a b) a b)))
   (define max (lambda (a b) (if (< a b) b a)))
@@ -54,21 +55,14 @@
     (if (= n 0) acc (digits-of (/ n 10) (string-append (substring "0123456789" (mod n 10) (+ (mod n 10) 1)) acc)))))
 
   ; ── code points ───────────────────────────────────────────────────────
+  ; Characters are Unicode code points; Wisp strings are UTF-8 bytes. The
+  ; utf8- builtins (wisp #129) count and cut by code point.
+  (define cp-len (lambda (s) (utf8-length s)))
+  (define cp-byte (lambda (s k) (utf8-offset s k)))
+  (define cp-sub (lambda (s a b) (utf8-substring s a b)))
+  ; the bytes of the code point that starts with byte b
   (define cp-width (lambda (b)
     (let (n (s32 b)) (if (< n 128) 1 (if (< n 224) 2 (if (< n 240) 3 4))))))
-  (define cp-byte-from (lambda (s k i)
-    (if (or (= k 0) (>= i (string-len s))) i
-      (cp-byte-from s (- k 1) (+ i (cp-width (string-ref s i)))))))
-  ; the byte index of code point k in s
-  (define cp-byte (lambda (s k) (cp-byte-from s k 0)))
-  ; the code points: the bytes that don't continue one (10xxxxxx)
-  (define cp-len-from (lambda (s i n)
-    (if (= i (string-len s)) n
-      (cp-len-from s (+ i 1) (if (= (/ (s32 (string-ref s i)) 64) 2) n (+ n 1))))))
-  (define cp-len (lambda (s) (cp-len-from s 0 0)))
-  ; code points a..b of s
-  (define cp-sub (lambda (s a b)
-    (let (i (cp-byte s a)) (substring s i (+ i (cp-byte (rest-of s i) (- b a)))))))
 
   ; ── strings ───────────────────────────────────────────────────────────
   ; join a list of strings by pairs, so each byte is copied log n times
@@ -217,17 +211,10 @@
             (do-delete m eid b end)))))))
 
   ; ── parsing and checking an event ─────────────────────────────────────
-  (define hex? (lambda (s i)
-    (if (= i (string-len s)) 1
-      (let (c (s32 (string-ref s i)))
-        (if (or (and (<= 48 c) (<= c 57)) (and (<= 97 c) (<= c 102))) (hex? s (+ i 1)) 0)))))
-  ; a decimal without leading zeros -> it, or -1
-  (define decimal-from (lambda (s i acc)
-    (if (= i (string-len s)) acc
-      (let (d (- (s32 (string-ref s i)) 48))
-        (if (or (< d 0) (< 9 d)) -1 (decimal-from s (+ i 1) (+ (* acc 10) d)))))))
+  ; a decimal without leading zeros or sign -> it, or -1
   (define decimal (lambda (s)
-    (if (or (= (string-len s) 0) (and (< 1 (string-len s)) (= (string-ref s 0) b-zero))) -1 (decimal-from s 0 0))))
+    (if (or (= (string-len s) 0) (= (string-ref s 0) b-minus) (and (< 1 (string-len s)) (= (string-ref s 0) b-zero))) -1
+      (match (string->s32 s) ((some n) n) ((none) -1)))))
   ; "^", "@:k" or "E:k" -> (list "^") (list "@" k) (list "E" eid k), or (list "?")
   (define parse-ref (lambda (s)
     (if (string=? s "^") (list "^")
@@ -236,7 +223,7 @@
           (let (k (decimal (rest-of s (+ c 1))))
             (if (< k 0) (list "?")
               (if (string=? (substring s 0 c) "@") (list "@" k)
-                (if (and (= c 64) (= (hex? (substring s 0 c) 0) 1)) (list "E" (substring s 0 c) k) (list "?"))))))))))
+                (if (and (= c 64) (= (hex? (substring s 0 c)) 1)) (list "E" (substring s 0 c) k) (list "?"))))))))))
   ; one op line -> (list "i" ref side text) / (list "d" ref n) / (list "?")
   (define parse-op (lambda (line)
     (let (b (if (< (string-len line) 3) -1 (string-index line b-space 2)))
