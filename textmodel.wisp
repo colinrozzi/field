@@ -9,6 +9,7 @@
 ;   (text-cursor m)                 -> (list id offset) for every character, deleted ones
 ;                                      too: the offset just after it (SPEC-text 4)
 ;   (text-invalid m)                -> the ids of the events it ignored
+;   (text-valid? m body)            -> 1 if a body is a valid event for m now, else 0
 ;   (text-copy m)                   -> an independent copy (text-apply changes m)
 ;   (text-edit m pos del ins)       -> the op lines that delete `del` characters at
 ;                                      visible offset `pos` and insert `ins` there (SPEC-text 4)
@@ -33,7 +34,7 @@
 ;           length, and owner[k] the node holding character k
 ;   inv     a map of the ignored events' ids; invlist the same, in order
 (module textmodel
-  (provide text-new text-apply text-string text-ids text-cursor text-invalid
+  (provide text-new text-apply text-valid? text-string text-ids text-cursor text-invalid
            text-copy text-edit text-ops text-diff text-escape text-unescape cp-len cp-sub num->str)
   (require list "std/list.wisp")
   (require str "std/str.wisp")
@@ -283,6 +284,12 @@
             (apply-ops (do-insert m me (car at) (list-get at 1) (list-get op 2) (list-get op 3) (list-get op 4) count)
                        me ops (+ i 1) (+ count (list-get op 4)))
             (apply-ops (do-delete m (car at) (list-get at 1) (+ (list-get at 1) (list-get op 2))) me ops (+ i 1) count)))))))
+
+  ; 1 if a body is valid against m as it stands (SPEC-text 3), else 0; m is unchanged
+  (define text-valid? (lambda (m body)
+    (let (ls (op-lines body))
+      (if (and (= (length ls) 1) (string=? (car ls) "?")) 0
+        (if (= (length (check-ops m ls 0 0 (list))) 1) 0 1)))))
 
   ; Changes m in place and returns it.
   (define text-apply (lambda (m id body)
