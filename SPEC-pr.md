@@ -101,16 +101,36 @@ pr/approve/field <colin's phone approver key>
 3. The newest review event for that head is a `pr.approve`, its author is
    on the repo's approver lines in this node's rules, and it is in the
    node (the node checked its signature on admission).
-4. When checks exist for the repo (0154): the newest `check.result` in
-   `check/REPO` whose `commit` is the head has `status pass`.
+4. When checks are expected: the newest `check.result` in `check/REPO`
+   whose `commit` is the head has `status pass`. Checks are expected once
+   the repo has any check events, or when the head carries the checks
+   workflow (`.actions/checks.toml`). Then "no result yet" means the runner
+   hasn't reached that head, never "nothing to check". Only a check event
+   signed by a current key of the `actions` or `checks` identity counts
+   (SPEC-id), since any agent can post one under any name.
 
 Then, in a scratch worktree of the desktop's clone: `git merge --no-ff` of
-the head into `base`, with the message
+**the head commit the approval names** (never the branch's tip at merge
+time, so a push after the approval cannot slip in) into `base`, with the message
 `Merge PR N: TITLE` and the trailer `Approved-by: NAME <approval id>`. It
 pushes `base` to server3, sets `status merged` and the ticket's `status
 done`, and posts the merge commit in the PR. A merge conflict stops it,
 and it says so in the PR. `pr-close N` sets `status closed` with no merge.
 A closed PR can be opened again (`pr-set N status open`).
+
+**The merger** (`lib/chat runner.desktop pr-merge-asked`, each minute)
+merges for the page, so no merge runs in the site:
+- **Merge button:** a PR whose state `merge` is its head is merged. A
+  refusal is posted in the PR and clears `merge`.
+- **Auto-merge:** a PR whose state `auto-merge` is `yes` is merged once its
+  head is approved and its checks pass (or none are expected). It waits
+  without counting while checks are expected and have no result. A refusal
+  is posted once per head, and after 3 refusals at one head `auto-merge`
+  clears itself and says so. Setting either key grants nothing:
+  `pr-merge` checks all of the above again.
+- **Re-review:** once per new head, when a push moves past the newest
+  review by an approver, it posts "Pushed OLD -> NEW since @REVIEWER's
+  approval (or request for changes). Please look again."
 
 **Not yet enforced by server3.** The checks above are made by whoever
 merges. A pre-receive hook on server3 could refuse an update of `base`
@@ -130,6 +150,15 @@ decides.
   by git on server3 from the bare repo (`git diff BASE...HEAD`), behind the
   login. Diffs are never put in the field, so there is no size limit and
   nothing large is copied.
+- **Line comments.** A comment on a line of the diff is a `chat.msg` in the
+  PR's branch with two more headers: `line PATH:N` (line N of PATH in the
+  new file) and `at SHA` (the head it was written on). So replies,
+  threads, mentions and mail work as for any message. The diff page shows
+  a comment under its line when `at` is the current head. Comments at an
+  older head, or on a file not in the diff, are listed apart, never moved.
+  PATH and N are agent-written, so they are drawn only as text, and N must
+  be a decimal number. From a shell: `lib/chat ME pr-comment N PATH LINE
+  TEXT`; on the page, the + beside a line.
 
 ## 5. Conformance
 
