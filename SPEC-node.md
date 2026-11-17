@@ -499,7 +499,9 @@ The seen entries (6) under any of `keys`, oldest first, read from the
 **scope index** instead of the seen chain. A key is a scope (`chat/main`),
 a prefix ending in `/` (`group/`), or `-` for all; up to 8 keys, joined by
 commas. `kind` keeps the entries whose kind starts with it. A page holds up
-to 256 entries (SCOPE-PAGE), fewer when several keys are read. `seq` numbers
+to 256 entries (SCOPE-PAGE). With several keys, each call reads one chunk of
+each and merges them in seq order up to the lowest point all of them were
+read to; only the lines that make the page are split into fields (0159). `seq` numbers
 the entries in seen order, from 1, and the cursor is a seq: pass it back as
 `after`, and call again at once while `more` is 1. When `more` is 0, `at` is
 the seen event the index ends at, so a reader can go on from there with

@@ -445,25 +445,29 @@
     (let (next (seen-after (read-or (string-append SX "/at") "")))
       (if (string=? next "") 1
         (if (= k 0) 0 (begin (sx-index-seen next) (sx-catch-up (- k 1))))))))
-  ; chunk k of key dir d, as (seq id scope kind) lists
+  ; chunk k of key dir d, as (seq line) pairs: only each line's seq is read
+  ; here; a line is split into its fields (sx-entry) only if it makes the
+  ; page, since splitting every line of every key's chunk ran a call with 8
+  ; keys past the step limit (0159)
   (define sx-chunk (lambda (d k)
-    (map (lambda (w) (list (str->num (nth w 0)) (nth w 1) (nth w 2) (nth w 3)))
-         (filter (lambda (w) (= (length w) 4)) (map words (lines (read-or (cat (list d "/" (sx-num k))) "")))))))
+    (map (lambda (l) (list (sx-seq-of l) l))
+         (filter (lambda (l) (< 0 (find-byte l b-space 0))) (lines (read-or (cat (list d "/" (sx-num k))) ""))))))
+  (define sx-seq-of (lambda (l) (str->num (substring l 0 (find-byte l b-space 0)))))
+  ; a (seq line) pair -> (seq id scope kind), seq -1 for a line that isn't one
+  (define sx-entry (lambda (e)
+    (let (w (words (nth e 1)))
+      (if (= (length w) 4) (list (car e) (nth w 1) (nth w 2) (nth w 3)) (list -1 "" "" "")))))
   ; the chunk that may hold the first entry after seq `after`: the last whose
   ; first is <= after (it may hold none past after; then the next one does)
   (define sx-chunk-for (lambda (fs after i best)
     (if (null? fs) best (if (<= (str->num (car fs)) after) (sx-chunk-for (cdr fs) after (+ i 1) i) best))))
-  ; One key's entries after `after`, from one chunk, at most m -> (list
-  ; entries bound): bound is the last seq this read covers, or -1 when it
-  ; covers all of them
-  (define sx-key-after (lambda (key after m)
+  ; One key's entries after `after`, from one chunk -> (list entries bound):
+  ; bound is the last seq this read covers, or -1 when it covers all of them
+  (define sx-key-after (lambda (key after)
     (let (d (sx-dir key))
       (if (<= (nth (sx-count d) 1) after) (list (list) -1)
         (let (fs (lines (read-or (string-append d "/firsts") "")))
-          (let (g (sx-from d fs (sx-chunk-for fs after 0 0) after))
-            (if (<= (length (car g)) m) g
-              (let (es (take-n (car g) m (list)))
-                (list es (car (car (reverse es))))))))))))
+          (sx-from d fs (sx-chunk-for fs after 0 0) after))))))
   (define sx-from (lambda (d fs k after)
     (let (ch (sx-chunk d k))
       (let (es (filter (lambda (e) (< after (car e))) ch))
@@ -471,11 +475,32 @@
           (list es (if (< (+ k 1) (length fs)) (nth (car (reverse ch)) 0) -1)))))))
   (define sx-min-bound (lambda (bs m)
     (if (null? bs) m (sx-min-bound (cdr bs) (if (< (car bs) 0) m (if (< m 0) (car bs) (if (< (car bs) m) (car bs) m)))))))
-  (define take-n (lambda (xs n acc) (if (or (null? xs) (= n 0)) (reverse acc) (take-n (cdr xs) (- n 1) (cons (car xs) acc)))))
-  ; sorted entries without repeats of a seq (two keys can hold one entry)
-  (define sx-distinct (lambda (es last acc)
-    (if (null? es) (reverse acc)
-      (sx-distinct (cdr es) (car (car es)) (if (= (car (car es)) last) acc (cons (car es) acc))))))
+  ; The k-way merge of the keys' entry lists (each in seq order): which list's
+  ; head is lowest (-1 when all are empty), and the lists with list j's head
+  ; taken off
+  (define sx-pick (lambda (ls i best bs)
+    (if (null? ls) best
+      (let (l (car ls))
+        (if (and (not (null? l)) (or (< best 0) (< (car (car l)) bs)))
+          (sx-pick (cdr ls) (+ i 1) i (car (car l)))
+          (sx-pick (cdr ls) (+ i 1) best bs))))))
+  (define sx-drop-head (lambda (ls j i acc)
+    (if (null? ls) (reverse acc)
+      (sx-drop-head (cdr ls) j (+ i 1) (cons (if (= i j) (cdr (car ls)) (car ls)) acc)))))
+  ; Up to n entries, lowest seq first, none past bound (when bound >= 0), a seq
+  ; two keys share taken once -> (list entries cut): cut is 1 when it stopped
+  ; at n with an entry within bound left. Linear in what it takes: no sort,
+  ; and each key's chunk is read once a call however many keys there are
+  ; (0159; before, each key gave n/k entries a call and its chunk was parsed
+  ; again on the next).
+  (define sx-merge (lambda (ls bound n acc last)
+    (let (j (sx-pick ls 0 -1 0))
+      (if (< j 0) (list (reverse acc) 0)
+        (let (e (car (nth ls j)))
+          (if (and (<= 0 bound) (< bound (car e))) (list (reverse acc) 0)
+            (if (= (car e) last) (sx-merge (sx-drop-head ls j 0 (list)) bound n acc last)
+              (if (= n 0) (list (reverse acc) 1)
+                (sx-merge (sx-drop-head ls j 0 (list)) bound (- n 1) (cons e acc) (car e))))))))))
   ; The seen entries under any of `keys` (each a scope, a prefix ending in /,
   ; or "" for all) whose kind starts with `kprefix`, after entry `after` (""
   ; = from the start), in seen order: one page of up to n, as (list cursor
@@ -490,20 +515,17 @@
       (fs-mkdir SX) (fs-mkdir (string-append SX "/s"))
       (if (= (sx-catch-up SX-STEP) 0) (list after (list) 1 "")
         (let (a (if (string=? after "") 0 (str->num after)))
-          (let (got (map (lambda (k) (sx-key-after k a (if (< (/ n (length keys)) 16) 16 (/ n (length keys))))) keys))
+          (let (got (map (lambda (k) (sx-key-after k a)) keys))
             (let (bound (sx-min-bound (map (lambda (g) (nth g 1)) got) -1))
-              (let (es (sx-distinct (sort (lambda (x y) (< (car x) (car y)))
-                                          (filter (lambda (e) (or (< bound 0) (<= (car e) bound)))
-                                                  (fold (lambda (acc g) (append acc (car g))) (list) got)))
-                                    -1 (list)))
-                (let (page (take-n es n (list)))
-                  (let (cursor (if (< (length page) (length es)) (car (car (reverse page)))
-                                 (if (< bound 0) (sx-seq) bound)))
-                    (let (more (if (or (< (length page) (length es)) (<= 0 bound)) 1 0))
-                      (list (sx-num cursor)
-                            (filter (lambda (e) (= (starts-with (nth e 3) kprefix) 1)) page)
-                            more
-                            (if (= more 0) (read-or (string-append SX "/at") "") "")))))))))))))
+              (let (m (sx-merge (map (lambda (g) (car g)) got) bound n (list) -1))
+                (let (page (car m))
+                  (let (cut (nth m 1))
+                    (let (cursor (if (= cut 1) (car (car (reverse page))) (if (< bound 0) (sx-seq) bound)))
+                      (let (more (if (or (= cut 1) (<= 0 bound)) 1 0))
+                        (list (sx-num cursor)
+                              (filter (lambda (e) (and (<= 0 (car e)) (= (starts-with (nth e 3) kprefix) 1))) (map sx-entry page))
+                              more
+                              (if (= more 0) (read-or (string-append SX "/at") "") ""))))))))))))))
 
   ; ── subscribers ───────────────────────────────────────────────────────
   (define field-subscribe (lambda (actor scope prefix)
