@@ -28,11 +28,13 @@
 ;                              could not be fetched yet; tried again each pull
 ;
 ; Blobs (SPEC-node 7.1): after admitting an event, the blobs it links (link
-; blob <sha256> ...) that this store lacks are fetched from the remote with
-; "blob <sha256>" and kept only if they hash to that name.
+; blob <sha256> ...) that the local store lacks ("has-blob") are fetched from
+; the remote with "blob <sha256>", checked against that name, and handed to
+; the local store with "put-blob", which checks again. Both ends are
+; reached by request, never this session's own disk, so a pull with the ends
+; swapped (the desktop's server3-push) carries blobs too (ticket 0137).
 (module peer
   (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch)
-  (require store "experiment/field/store.wisp")
 
   (define PULLS 8)   ; pages per peer-pull call
 
@@ -174,26 +176,30 @@
                 (let (w (split-from l b-space 0 (list))) (if (< 2 (length w)) (list-push acc (list-get w 2)) acc))
                 acc))))))))
   (define blobs-path (lambda (name) (string-append "field/peers/" name ".blobs")))
-  ; fetch one blob from remote unless it is here -> 1 when it is here after
-  (define fetch-blob (lambda (remote h)
-    (if (= (field-blob-exists h) 1) 1
-      (let (r (peer-request remote (string-append "blob " h "\n")))
-        (if (= (list-get r 0) 0) 0
-          (if (string=? (sha256 (list-get r 1)) h)
-            (if (string=? (field-blob-put (list-get r 1)) h) 1 0)
-            0))))))
-  ; fetch each of hs; -> the ones still missing
-  (define fetch-blobs (lambda (remote hs out)
+  ; copy one blob from remote to local unless local has it -> 1 when local
+  ; has it after
+  (define fetch-blob (lambda (remote local h)
+    (let (have (peer-request local (string-append "has-blob " h "\n")))
+      (if (and (= (list-get have 0) 1) (string=? (list-get have 1) "1")) 1
+        (let (r (peer-request remote (string-append "blob " h "\n")))
+          (if (= (list-get r 0) 0) 0
+            (let (b (list-get r 1))
+              (if (string=? (sha256 b) h)
+                (let (p (peer-request local (string-append "put-blob " h " " (num->str (string-len b)) "\n" b)))
+                  (if (and (= (list-get p 0) 1) (string=? (list-get p 1) h)) 1 0))
+                0))))))))
+  ; copy each of hs; -> the ones still missing
+  (define fetch-blobs (lambda (remote local hs out)
     (if (null? hs) out
-      (fetch-blobs remote (cdr hs) (if (= (fetch-blob remote (car hs)) 1) out (list-push out (car hs)))))))
+      (fetch-blobs remote local (cdr hs) (if (= (fetch-blob remote local (car hs)) 1) out (list-push out (car hs)))))))
   (define push-all (lambda (xs ys) (if (null? ys) xs (push-all (list-push xs (car ys)) (cdr ys)))))
   (define join-lines (lambda (xs acc) (if (null? xs) acc (join-lines (cdr xs) (string-append acc (car xs) "\n")))))
   ; try the pending ones again, plus hs -> nothing; what is still missing stays pending
-  (define settle-blobs (lambda (name remote hs)
+  (define settle-blobs (lambda (name remote local hs)
     (let (pend (split-from (match (fs-read-text (blobs-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list)))
       (let (all (push-all pend hs))
         (if (null? all) "none"
-          (fs-write (blobs-path name) (join-lines (fetch-blobs remote all (list)) "")))))))
+          (fs-write (blobs-path name) (join-lines (fetch-blobs remote local all (list)) "")))))))
 
   ; admit the records of a pull payload p from i -> "" or the error
   (define admit-records (lambda (local p i wants)
@@ -227,10 +233,10 @@
             (let (j (find-byte p b-nl 0))
               (let (head (split-from (substring p 0 j) b-space 0 (list)))
                 (let (cursor (list-get head 0))
-                  (if (or (string=? cursor "-") (string=? cursor after)) (begin (settle-blobs name remote (list)) "idle")
+                  (if (or (string=? cursor "-") (string=? cursor after)) (begin (settle-blobs name remote local (list)) "idle")
                     (if (string=? (admit-records local p (+ j 1) wants) "")
                       (begin
-                        (settle-blobs name remote (record-blobs p (+ j 1) wants (list)))
+                        (settle-blobs name remote local (record-blobs p (+ j 1) wants (list)))
                         (fs-write-durable (cursor-path name) cursor)
                         (if (string=? (list-get head 1) "1")
                           (if (< 1 k) (pull-on name remote local wants (- k 1)) "more")

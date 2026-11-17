@@ -16,6 +16,12 @@
 ;   blob <sha256>                      -> the blob's bytes (SPEC-node 7.1):
 ;                                         anyone who can reach this store and
 ;                                         knows the hash can read it
+;   has-blob <sha256>                  -> "1" if this store has the blob, else "0"
+;   put-blob <sha256> <len>\n<bytes>   -> the sha256, once the blob is kept: only
+;                                         bytes that hash to the name, at most
+;                                         MAX-BLOB, while the disk has MIN-FREE
+;                                         left (ticket 0137: how a blob reaches
+;                                         a store its writer can't write to)
 ;   watch                              -> the head now; then, unasked, one more
 ;                                         "ok" reply holding the new head each
 ;                                         time this store sees a new event
@@ -28,6 +34,8 @@
   (require store "experiment/field/store.wisp")
 
   (define MAX-REQUEST 20000)
+  (define MAX-BLOB 10485760)      ; 10 MB, the browser's cap for a file (0133)
+  (define MIN-FREE 1024)          ; MiB: put-blob refuses with less than 1 GB free
   (define PULL-PAGE 64)
   ; Scopes under this prefix stay on this machine: no request sends them, nor
   ; names them (follow leaves their entries out, get says no such event).
@@ -118,6 +126,34 @@
     (if (null? ws) "told" (begin (tcp-send (car ws) msg) (tell-each (cdr ws) msg)))))
   (define tell-watchers (lambda (head) (tell-each (watchers) (ok-reply head))))
 
+  ; ── blobs put by request (0137) ──────────────────────────────────────
+  ; MiB free on the disk the daemon runs from (its working directory, on
+  ; the same disk as the fs root on both nodes), by df; -1 if unknown.
+  ; In MiB because wisp numbers are 32-bit
+  (define last-line (lambda (ls) (if (null? (cdr ls)) (car ls) (last-line (cdr ls)))))
+  (define trim-left (lambda (s i) (if (and (< i (string-len s)) (= (s32 (string-ref s i)) 32)) (trim-left s (+ i 1)) (substring s i (string-len s)))))
+  (define disk-free (lambda ()
+    (match (process-run "df" (list "-B1048576" "--output=avail" "."))
+      ((ok o)
+        (match o
+          ((run-output st out errb tr)
+            (let (ls (split-from (bytes->string out) b-nl 0 (list)))
+              (if (< (length ls) 2) -1 (str->num (trim-left (last-line ls) 0)))))))
+      ((err e) -1))))
+  (define do-put-blob (lambda (w data)
+    (let (h (list-get w 1))
+      (if (not-hash? h) (err-reply "put-blob wants <sha256> <len>")
+        (if (not (string=? (sha256 data) h)) (err-reply "the bytes don't hash to the name")
+          (if (= (field-blob-exists h) 1) (ok-reply h)
+            (if (< (disk-free) MIN-FREE) (err-reply "too little disk free")
+              (let (r (field-blob-put data))
+                (if (string=? r h) (ok-reply h) (err-reply r))))))))))
+  (define not-hash? (lambda (h) (if (= (string-len h) 64) 0 1)))
+  (define not (lambda (b) (if b 0 1)))
+  ; the most bytes a request starting buf may need
+  (define limit-for (lambda (buf)
+    (if (= (has-prefix buf "put-blob ") 1) (+ MAX-BLOB 200) MAX-REQUEST)))
+
   (define do-admit (lambda (store w text)
     (let (before (field-seen-head))
       (let (r (field-admit store (list-get w 1) text))
@@ -137,6 +173,15 @@
           (let (rest (lambda () (substring buf (+ j 1) (string-len buf))))
             (if (null? w) (drain store cid (rest))
               (let (verb (list-get w 0))
+                (if (string=? verb "put-blob")
+                  (let (n (if (< (length w) 3) -1 (str->num (list-get w 2))))
+                    (if (or (< n 0) (< MAX-BLOB n))
+                      (begin (tcp-send cid (err-reply (if (< n 0) "put-blob wants <sha256> <len>" "the blob is too large")))
+                             (if (< n 0) (drain store cid (rest)) (begin (tcp-close cid) "")))
+                      (if (< (string-len buf) (+ (+ j 1) n)) buf
+                        (begin
+                          (tcp-send cid (do-put-blob w (substring buf (+ j 1) (+ (+ j 1) n))))
+                          (drain store cid (substring buf (+ (+ j 1) n) (string-len buf)))))))
                 (if (string=? verb "admit")
                   (let (n (if (< (length w) 3) -1 (str->num (list-get w 2))))
                     (if (< n 0)
@@ -155,11 +200,13 @@
                           (if (string=? verb "blob")
                             (if (< (length w) 2) (err-reply "blob wants <sha256>")
                               (match (field-blob-get (list-get w 1)) ((ok b) (ok-reply b)) ((err e) (err-reply e))))
+                            (if (string=? verb "has-blob")
+                              (if (< (length w) 2) (err-reply "has-blob wants <sha256>") (ok-reply (num->str (field-blob-exists (list-get w 1)))))
                             (if (string=? verb "watch")
                               (begin (fs-append WATCHERS (string-append cid "\n"))
                                      (ok-reply (field-seen-head)))
-                              (err-reply "unknown request"))))))))
-                    (drain store cid (rest))))))))))))
+                              (err-reply "unknown request")))))))))
+                    (drain store cid (rest)))))))))))))
 
   (define field-connection (lambda (cid)
     (begin (tcp-activate cid) (tcp-set-active cid "active") "connected")))
@@ -169,10 +216,10 @@
       (let (buf (string-append
                   (match (fs-read-text (conn-path cid)) ((ok t) t) ((err x) ""))
                   (bytes->string (car (cdr e)))))
-        (if (< MAX-REQUEST (string-len buf))
-          (begin (tcp-send cid (err-reply "request too large")) (tcp-close cid)
-                 (fs-delete (conn-path cid)) "too large")
-          (let (left (drain store cid buf))
+        (let (left (drain store cid buf))
+          (if (< (limit-for left) (string-len left))
+            (begin (tcp-send cid (err-reply "request too large")) (tcp-close cid)
+                   (fs-delete (conn-path cid)) "too large")
             (begin
               (if (string=? left "") (fs-delete (conn-path cid)) (fs-write (conn-path cid) left))
               "data")))))))

@@ -316,11 +316,14 @@ in them, and are neither signed nor in the seen chain: the hash is the proof.
 - A store writes a blob only after checking that the bytes hash to its
   name, so a blob from anywhere is what its name says.
 - A blob is written by whoever holds the bytes on the node's machine
-  (`field-blob-put` in store.wisp: node-chat's caller, the site's upload,
-  a peer); reading one needs only its hash (8.8).
+  (`field-blob-put` in store.wisp: the site's upload), or by anyone who can
+  reach the node, with `put-blob` (8.10: lib/chat's attach, a peer);
+  reading one needs only its hash (8.8).
 - Blobs are kept as long as events, for now: forever.
 
-Ticket 0133 (2026-11-15) added blobs, for files in chat (SPEC-chat 4.1).
+Ticket 0133 (2026-11-15) added blobs, for files in chat (SPEC-chat 4.1);
+ticket 0137 (2026-11-16) added `has-blob` and `put-blob`, so a blob made on
+the desktop reaches server3.
 
 ## 8. The TCP protocol
 
@@ -343,8 +346,9 @@ err <n>\n<n bytes of reason>
 with `<n>` in decimal. A request may arrive in pieces; the node buffers the
 bytes until it has a whole request.
 
-**Limit.** If the bytes buffered on a connection (left over plus newly
-received) exceed **20000** (MAX-REQUEST), the node replies `err 17\nrequest
+**Limit.** If the bytes still buffered on a connection after every whole
+request in them is answered exceed **20000** (MAX-REQUEST), or, when they
+start with `put-blob `, MAX-BLOB + 200, the node replies `err 17\nrequest
 too large` and closes the connection.
 
 An unknown verb gets `err 15\nunknown request`.
@@ -446,6 +450,40 @@ Anyone who can reach the node and knows a blob's hash can read it: the hash
 is its only key, so a blob linked from a `private/` event is shared with
 whoever learns that event's links.
 
+### 8.9 `has-blob <sha256>`
+
+```
+-> has-blob <sha256>\n
+<- ok 1\n1   or   ok 1\n0
+```
+
+Whether the node holds that blob. A word that is not a hash is `0`.
+
+### 8.10 `put-blob <sha256> <len>`
+
+```
+-> put-blob <sha256> <len>\n<len bytes>
+<- ok 64\n<sha256>   or   err <n>\n<reason>
+```
+
+The node keeps the bytes as blob `<sha256>` (7.1) and answers with its name.
+A blob it already holds is answered the same, without writing.
+
+| reason | when |
+|---|---|
+| `put-blob wants <sha256> <len>` | `<len>` is missing or not a number, or the name is not 64 characters |
+| `the blob is too large` | `<len>` is over **10485760** (MAX-BLOB, 10 MB, the browser's cap for a chat file); the node then closes the connection |
+| `the bytes don't hash to the name` | sha256 of the bytes is not `<sha256>` |
+| `too little disk free` | the disk the daemon runs from has under **1024 MiB** free (MIN-FREE), as `df -B1048576 --output=avail .` says, or df can't say |
+
+Anyone who can reach the node can put a blob: on loopback any local
+process, through a gate (section 10) any node in `gate-keys`. What they can
+do with it is limited to disk, which the cap and MIN-FREE bound; a blob can
+only ever hold what its name says. The bytes are buffered in
+`field/conn/<cid>` as they arrive, rewritten on each piece, so a 10 MB put
+costs some hundreds of MB of writes on the node; fine for screenshots and
+logs, not for bulk.
+
 ## 9. Peers: following another node
 
 Following is not the node's job: a separate **peer** session dials both
@@ -501,8 +539,13 @@ reopens any watch that has closed.
 
 After step 6 of a page (9.2), the peer looks at the link lines of every
 wanted record in it, and for each `link blob <sha256> ...` whose blob the
-local store lacks, sends `blob <sha256>` (8.8) to the remote. It keeps the
-bytes only if they hash to that name. A blob it could not get (the remote
+local node lacks (`has-blob`, 8.9), sends `blob <sha256>` (8.8) to the
+remote, and, if the bytes hash to that name, hands them to the local node
+with `put-blob` (8.10). The peer reaches both nodes by request and never
+writes its own disk's store, so a direction whose local node is the far one
+(the desktop's `server3-push`, 9.3) copies blobs too (ticket 0137; before
+it, the peer wrote the blob into its own machine's store, and blobs made on
+the desktop never reached server3). A blob it could not get (the remote
 lacks it, or the answer is wrong) goes in `field/peers/<name>.blobs` and is
 asked for again on each later pull, an idle one too. A missing blob never
 stops events: the event is admitted, its blob follows when it can.

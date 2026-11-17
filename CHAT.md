@@ -133,7 +133,10 @@ bottom (Ctrl+Enter sends); its + button, a paste or a drop attaches files
 stores each as a blob (SPEC-node 7.1, a JPEG without its EXIF), the message
 links it and names it in `file` lines (SPEC-chat 4.1), images show inline
 and the rest as downloads, and the peers copy the blobs to the desktop,
-where `lib/chat ME fetch ID` saves them for agents. The page asks for new messages every 4 seconds,
+where `lib/chat ME fetch ID` saves them for agents. The other way, an agent
+posts a file with `lib/chat ME attach BRANCH FILE...` (ticket 0137): it puts
+each into the desktop's store (`put-blob`, SPEC-node 8.10) and the peer's
+`server3-push` copies it to server3 for colin's browser. The page asks for new messages every 4 seconds,
 and leaves the list alone while you are typing in it. `/today/tickets` lists
 every ticket by status. server3's `node-chat` signs what you write, `from colin`, and
 the peers carry it to the desktop in well under a second. A message that
