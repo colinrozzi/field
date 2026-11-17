@@ -15,7 +15,7 @@
 ;
 ; The models live in this session (Wisp maps, so a restart replays every
 ; doc.ops event from the store; snapshots are a later ticket, SPEC-text 5):
-;   STATE    (vector cursor models tips store): the seen event followed up to, maps
+;   STATE    (vector cursor models tips store): the scope index's cursor read up to, maps
 ;            from D to its model (textmodel.wisp) and to its tips (doc.ops ids no
 ;            later one names as a parent), and the store's address
 ;   field/docs/conn/<cid>    bytes of a request still arriving
@@ -69,11 +69,13 @@
                     (list-push (filter (lambda (t) (not (in? t (list-get e 6)))) (tips-of d)) id))
                   1)))))))))
 
-  ; follow from the cursor to the store's head, a page at a time
+  ; read doc/'s doc.ops from the cursor to the store's head, a page at a time,
+  ; from the store's scope index (0159): a fresh start no longer walks the
+  ; whole seen chain (minutes on the desktop's 9,500 events)
   (define docs-catch-up (lambda ()
-    (let (r (field-after (store) (vector-ref STATE 0) "" "doc.ops"))
+    (let (r (field-scope-after (store) (vector-ref STATE 0) "doc/" "doc.ops"))
       (begin
-        (map (lambda (en) (take-event (list-get en 0))) (list-get r 1))
+        (map (lambda (en) (take-event (list-get en 1))) (list-get r 1))
         (vector-set! STATE 0 (list-get r 0))
         (if (= (list-get r 2) 1) (docs-catch-up) "caught up")))))
 
