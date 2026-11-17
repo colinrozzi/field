@@ -1,7 +1,8 @@
 # Actions: specification
 
 Status: ticket 0155 (git platform), 2026-11-17. A draft by beck of the parts
-built in step 1, the Actions core; ada (lead) owns this spec. Architecture:
+built in step 1, the Actions core, with lux's review of it (section 5);
+ada (lead) owns this spec. Architecture:
 the document `git-platform` (§2, §3, §8).
 
 Workflows run on pushes, as jobs on a runner per host. Every step is a field
@@ -25,7 +26,7 @@ commit**, so a branch can change its own workflows. `<name>` is a name (SPEC-cha
 | `memory` | `"4G"` | each step's MemoryMax |
 | `timeout` | `900` | seconds per step |
 | `job-timeout` | `2700` | seconds for the job |
-| `network` | `"offline"` | `offline` or `internet`; enforced with the job user (§5 of the document, option (b)) |
+| `network` | `"offline"` | `offline` or `internet`. **Not enforced under option (a)**: every job has the network until the job user of option (b) (PrivateNetwork). Don't rely on it |
 | `secrets` | `[]` | secret names, granted in the store; for master workflows only. **Not wired yet**: a job whose workflow lists any ends with `status error` |
 | `syntax` | `false` | first run the syntax pass on the changed files: bash -n, python compile, node --check, TOML, and Wisp parenthesis balance |
 | `assets` | `[]` | gitignored files a step needs (paths inside the worktree, no `..`): the runner keeps one copy and links it in |
@@ -71,9 +72,48 @@ All in scope `actions/<repo>`. Rules: `actions/ id`.
 - The newest result for a (workflow, commit) is that workflow's status for
   the commit.
 
-## 4. Who writes it
+## 4. Who writes it, and the environment of a step
 
 `actions` (the dispatcher and the desktop runner, in one process for now)
 signs every event through node-chat. As with chat, anything on the desktop
 can post as `actions`: the trust is the machine's. Under option (a) jobs run
 pushed code as colin. Option (b)'s field-jobs user is the hardening pass.
+
+A step SHOULD run with a minimal environment (PATH, HOME, LANG, TMPDIR and
+the job's own variables), never the runner's whole environment, so that
+whatever is in it (an `SSH_AUTH_SOCK`, a token) doesn't reach a job by
+accident.
+
+## 5. Before any job gets secrets (lux's review)
+
+Secrets are refused today (a workflow that lists any ends in `error`).
+Before that changes, all of these MUST hold (doc `git-platform-security`
+R4, R6):
+
+1. **The job event is not trusted for anything that grants rights.** Every
+   desktop id key is signable by any agent (SPEC-id 5), so a job whose
+   `from` says `actions` may still be forged. The runner checks that the
+   event's **author key** is the actions key, and then works out for itself,
+   from its mirror of server3's repo, that the commit is on
+   `refs/heads/master` and that the trigger was `merge`.
+2. **The secrets list comes from the workflow as it is on master** at that
+   commit, never from a branch or a PR. Which workflow may read which
+   secret is a grant colin makes in the secrets store
+   (`workflow:<repo>/<name>`), not the workflow file's own claim.
+3. **Logs.** A job that got secrets keeps its full log on the host, and only
+   the masked log goes in the blob, since a blob reaches every store that
+   holds the scope.
+4. Each secret fetch posts `secret.read` with reader
+   `workflow:<repo>/<name>` and the job id.
+
+Later, for option (b): the runner runs from a root-owned copy, as
+`lib/runner` does, so that an edit to it in the shared checkout doesn't take
+effect at its next restart unreviewed.
+
+## 6. What's next here
+
+- `pr` (a PR opened or pushed) and `timer` triggers.
+- `runs-on = "server3"`: the server3 runner, which also installs deploys
+  (SPEC-deploy). Its jobs stay queued until it exists.
+- The deploy workflow (SPEC-deploy §3) is a `merge` workflow on master.
+- `/personal/actions`: jobs, their steps and logs, by repo and commit.
