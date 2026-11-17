@@ -17,6 +17,14 @@
 ;                                         anyone who can reach this store and
 ;                                         knows the hash can read it
 ;   has-blob <sha256>                  -> "1" if this store has the blob, else "0"
+;   scope <keys|-> <after|-> <kind|->  -> "<cursor> <more> <at|->\n" then one
+;                                         "<seq> <id> <scope> <kind>\n" per seen
+;                                         entry under any of keys (up to 8, comma
+;                                         separated: a scope, or a prefix ending
+;                                         in /; - for all), from the scope index
+;                                         (store.wisp, 0159), not the seen chain;
+;                                         at: when more is 0, the seen event the
+;                                         read ends at, to go on with pull
 ;   put-blob <sha256> <len>\n<bytes>   -> the sha256, once the blob is kept: only
 ;                                         bytes that hash to the name, at most
 ;                                         MAX-BLOB, while the disk has MIN-FREE
@@ -40,6 +48,7 @@
   (define MAX-BLOB 2097152)
   (define MIN-FREE 1024)          ; MiB: put-blob refuses with less than 1 GB free
   (define PULL-PAGE 64)
+  (define SCOPE-PAGE 256)
   ; Scopes under this prefix stay on this machine: no request sends them, nor
   ; names them (follow leaves their entries out, get says no such event).
   (define PRIVATE "private/")
@@ -47,6 +56,7 @@
   (define find-byte (lambda (s b i) (string-index s b i)))
   (define b-nl (string-ref "\n" 0))
   (define b-space (string-ref " " 0))
+  (define b-comma (string-ref "," 0))
 
   (define split-from (lambda (s b i acc)
     (let (j (find-byte s b i))
@@ -98,6 +108,20 @@
           (if (has-prefix (event-scope e) PRIVATE) (err-reply "no such event")
             (let (t (field-file (list-get w 1)))
               (if (string=? t "") (err-reply "no such event") (ok-reply t)))))))))
+
+  (define do-scope (lambda (w)
+    (if (< (length w) 3) (err-reply "scope wants <prefix> <after> <kind>")
+      (let (keys (if (string=? (list-get w 1) "-") (list "") (split-from (list-get w 1) b-comma 0 (list))))
+       (if (or (null? keys) (< 8 (length keys))) (err-reply "scope takes 1 to 8 keys")
+        (let (f (field-scope keys (dash (list-get w 2)) (if (< (length w) 4) "" (dash (list-get w 3))) SCOPE-PAGE))
+        (ok-reply (string-append (orz (list-get f 0)) " " (num->str (list-get f 2)) " " (orz (list-get f 3)) "\n"
+                                 (scope-lines (list-get f 1) "")))))))))
+  (define scope-lines (lambda (es out)
+    (if (null? es) out
+      (let (e (car es))
+        (scope-lines (cdr es)
+          (if (has-prefix (list-get e 2) PRIVATE) out
+            (string-append out (num->str (list-get e 0)) " " (list-get e 1) " " (list-get e 2) " " (list-get e 3) "\n")))))))
 
   ; the pull records for entries es from i, skipping what isn't shared
   (define pull-records (lambda (es i out)
@@ -198,6 +222,7 @@
                     (tcp-send cid
                       (if (string=? verb "head") (ok-reply (field-seen-head))
                         (if (string=? verb "follow") (do-follow w)
+                        (if (string=? verb "scope") (do-scope w)
                         (if (string=? verb "pull") (do-pull w)
                           (if (string=? verb "get") (do-get w)
                           (if (string=? verb "blob")
@@ -208,7 +233,7 @@
                             (if (string=? verb "watch")
                               (begin (fs-append WATCHERS (string-append cid "\n"))
                                      (ok-reply (field-seen-head)))
-                              (err-reply "unknown request")))))))))
+                              (err-reply "unknown request"))))))))))
                     (drain store cid (rest)))))))))))))
 
   (define field-connection (lambda (cid)

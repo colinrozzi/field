@@ -19,9 +19,10 @@
 ;   field/ids/<name>/...       identities (field/SPEC-id.md, idmodel.wisp), kept as
 ;                              id.* events are admitted
 ;   field/blobs/ab/cdef...     a blob: the bytes whose sha256 is abcdef... (SPEC-node 7.1)
+;   field/scope-index/...      the seen entries by scope (see "the scope index")
 (module store
   (provide field-start field-append field-admit field-get field-exists field-file
-           field-follow field-follow-n field-seen-head field-subscribe
+           field-follow field-follow-n field-seen-head field-subscribe field-scope
            event-id event-author event-scope event-kind event-time
            event-parents event-links event-body event-sig bad? bad-reason
            field-blob-put field-blob-get field-blob-exists)
@@ -246,6 +247,7 @@
   ; a seen can't cause another seen.
   (define record-seen (lambda (store ids)
     (let (head (field-seen-head))
+     (let (indexed (sx-caught-up head))
       (let (body (cat (map seen-line ids)))
         (let (author (author-of store))
           (let (scope (string-append "field/seen/" store))
@@ -260,8 +262,9 @@
                         id)
                       (fs-write-durable "field/seen-head" id)
                       (map (lambda (x) (fs-delete (string-append "field/unseen/" x))) ids)
+                      (if (= indexed 1) (sx-index-seen id) "behind")
                       (notify-subs id)
-                      id)))))))))))
+                      id))))))))))))
 
   ; ── admission ─────────────────────────────────────────────────────────
   ; Who may write where: field/rules (the file `rules` next to this one),
@@ -374,6 +377,133 @@
       (list (car w)
             (entries-of (car (cdr w)) scope prefix (list))
             (car (cdr (cdr w)))))))
+
+  ; ── the scope index (ticket 0159) ─────────────────────────────────────
+  ; The seen entries again, by scope, so a reader of a few scopes needn't walk
+  ; the whole seen chain (two file reads and a parse an event: a minute for
+  ; the desktop's 9,500 events, 2026-11-17). Entries are numbered in seen
+  ; order (seq, from 1). Each goes into the index of its scope and of every
+  ; prefix of it that ends in / , and of "" (all): chat/main is in "",
+  ; "chat/" and "chat/main". So a reader of a scope, or of a prefix ending in
+  ; /, reads one index, however many scopes it covers. Under
+  ; field/scope-index/:
+  ;   seq             the last entry's number ("0" = none)
+  ;   at              the last seen event indexed ("" = none)
+  ;   s/x<key>/n      "<entries> <last seq>" of that key (its / as +)
+  ;   s/x<key>/firsts each chunk's first seq, one a line
+  ;   s/x<key>/<k>    chunk k: up to SX-CHUNK lines "<seq> <id> <scope> <kind>"
+  ; Chunks keep each read small (a string costs the daemon ~270x its size,
+  ; 0157). record-seen indexes as it records while the index is caught up; a
+  ; store that's behind (one from before 0159) catches up SX-STEP seen events
+  ; per field-scope call. Plain writes, not durable ones: after a power cut,
+  ; delete field/scope-index and it is built again. After a crash between an
+  ; append and `at`, an entry may be indexed twice: readers take events
+  ; idempotently.
+  (define SX "field/scope-index")
+  (define SX-CHUNK 128)
+  (define SX-STEP 16)
+  (define sx-num (lambda (n)
+    (if (< n 10) (substring "0123456789" n (+ n 1))
+      (string-append (sx-num (/ n 10)) (sx-num (- n (* 10 (/ n 10))))))))
+  (define join-plus (lambda (xs)
+    (if (null? xs) "" (if (null? (cdr xs)) (car xs) (cat (list (car xs) "+" (join-plus (cdr xs))))))))
+  ; a key's directory: "x" then the key with / as +, so no key is a path
+  (define sx-dir (lambda (key) (cat (list SX "/s/x" (join-plus (split key "/"))))))
+  ; the keys a scope is indexed under: "", each prefix ending in /, itself
+  (define sx-keys-from (lambda (scope i acc)
+    (let (j (find-byte scope b-slash i))
+      (if (< j 0) (list-push acc scope)
+        (sx-keys-from scope (+ j 1) (list-push acc (substring scope 0 (+ j 1))))))))
+  (define sx-keys (lambda (scope) (sx-keys-from scope 0 (list ""))))
+  (define sx-seq (lambda () (str->num (read-or (string-append SX "/seq") "0"))))
+  (define sx-caught-up (lambda (head) (if (string=? (read-or (string-append SX "/at") "") head) 1 0)))
+  ; "<entries> <last seq>" of a key -> (list entries last)
+  (define sx-count (lambda (d)
+    (let (w (words (read-or (string-append d "/n") "0 0")))
+      (list (str->num (nth w 0)) (str->num (nth w 1))))))
+  (define sx-add-to (lambda (d line seq)
+    (let (n (car (sx-count d)))
+      (begin
+        (if (= n 0) (fs-mkdir d) "")
+        (if (= (- n (* SX-CHUNK (/ n SX-CHUNK))) 0) (fs-append (string-append d "/firsts") (string-append (sx-num seq) "\n")) "")
+        (fs-append (cat (list d "/" (sx-num (/ n SX-CHUNK)))) line)
+        (fs-write (string-append d "/n") (cat (list (sx-num (+ n 1)) " " (sx-num seq))))))))
+  (define sx-add (lambda (seq id scope kind)
+    (let (line (cat (list (sx-num seq) " " id " " scope " " kind "\n")))
+      (map (lambda (k) (sx-add-to (sx-dir k) line seq)) (sx-keys scope)))))
+  ; index one seen event's entries
+  (define sx-index-seen (lambda (sid)
+    (let (e (field-get sid))
+      (begin
+        (if (bad? e) ""
+          (fs-write (string-append SX "/seq")
+            (sx-num (fold (lambda (seq w) (if (< (length w) 3) seq (begin (sx-add (+ seq 1) (nth w 0) (nth w 1) (nth w 2)) (+ seq 1))))
+                          (sx-seq) (seen-entries e)))))
+        (fs-write (string-append SX "/at") sid)))))
+  ; index up to k more seen events -> 1 when caught up
+  (define sx-catch-up (lambda (k)
+    (let (next (seen-after (read-or (string-append SX "/at") "")))
+      (if (string=? next "") 1
+        (if (= k 0) 0 (begin (sx-index-seen next) (sx-catch-up (- k 1))))))))
+  ; chunk k of key dir d, as (seq id scope kind) lists
+  (define sx-chunk (lambda (d k)
+    (map (lambda (w) (list (str->num (nth w 0)) (nth w 1) (nth w 2) (nth w 3)))
+         (filter (lambda (w) (= (length w) 4)) (map words (lines (read-or (cat (list d "/" (sx-num k))) "")))))))
+  ; the chunk that may hold the first entry after seq `after`: the last whose
+  ; first is <= after (it may hold none past after; then the next one does)
+  (define sx-chunk-for (lambda (fs after i best)
+    (if (null? fs) best (if (<= (str->num (car fs)) after) (sx-chunk-for (cdr fs) after (+ i 1) i) best))))
+  ; One key's entries after `after`, from one chunk, at most m -> (list
+  ; entries bound): bound is the last seq this read covers, or -1 when it
+  ; covers all of them
+  (define sx-key-after (lambda (key after m)
+    (let (d (sx-dir key))
+      (if (<= (nth (sx-count d) 1) after) (list (list) -1)
+        (let (fs (lines (read-or (string-append d "/firsts") "")))
+          (let (g (sx-from d fs (sx-chunk-for fs after 0 0) after))
+            (if (<= (length (car g)) m) g
+              (let (es (take-n (car g) m (list)))
+                (list es (car (car (reverse es))))))))))))
+  (define sx-from (lambda (d fs k after)
+    (let (ch (sx-chunk d k))
+      (let (es (filter (lambda (e) (< after (car e))) ch))
+        (if (and (null? es) (< (+ k 1) (length fs))) (sx-from d fs (+ k 1) after)
+          (list es (if (< (+ k 1) (length fs)) (nth (car (reverse ch)) 0) -1)))))))
+  (define sx-min-bound (lambda (bs m)
+    (if (null? bs) m (sx-min-bound (cdr bs) (if (< (car bs) 0) m (if (< m 0) (car bs) (if (< (car bs) m) (car bs) m)))))))
+  (define take-n (lambda (xs n acc) (if (or (null? xs) (= n 0)) (reverse acc) (take-n (cdr xs) (- n 1) (cons (car xs) acc)))))
+  ; sorted entries without repeats of a seq (two keys can hold one entry)
+  (define sx-distinct (lambda (es last acc)
+    (if (null? es) (reverse acc)
+      (sx-distinct (cdr es) (car (car es)) (if (= (car (car es)) last) acc (cons (car es) acc))))))
+  ; The seen entries under any of `keys` (each a scope, a prefix ending in /,
+  ; or "" for all) whose kind starts with `kprefix`, after entry `after` (""
+  ; = from the start), in seen order: one page of up to n, as (list cursor
+  ; entries more at), entries (seq id scope kind). Pass cursor back as
+  ; `after`; call again at once when more is 1. When more is 0, `at` is the
+  ; seen event the index ends at: a reader can go on from there with
+  ; field-follow or pull, having missed nothing (else at is ""). While the
+  ; index is catching up, a call indexes SX-STEP seen events and answers no
+  ; entries with more 1.
+  (define field-scope (lambda (keys after kprefix n)
+    (begin
+      (fs-mkdir SX) (fs-mkdir (string-append SX "/s"))
+      (if (= (sx-catch-up SX-STEP) 0) (list after (list) 1 "")
+        (let (a (if (string=? after "") 0 (str->num after)))
+          (let (got (map (lambda (k) (sx-key-after k a (if (< (/ n (length keys)) 16) 16 (/ n (length keys))))) keys))
+            (let (bound (sx-min-bound (map (lambda (g) (nth g 1)) got) -1))
+              (let (es (sx-distinct (sort (lambda (x y) (< (car x) (car y)))
+                                          (filter (lambda (e) (or (< bound 0) (<= (car e) bound)))
+                                                  (fold (lambda (acc g) (append acc (car g))) (list) got)))
+                                    -1 (list)))
+                (let (page (take-n es n (list)))
+                  (let (cursor (if (< (length page) (length es)) (car (car (reverse page)))
+                                 (if (< bound 0) (sx-seq) bound)))
+                    (let (more (if (or (< (length page) (length es)) (<= 0 bound)) 1 0))
+                      (list (sx-num cursor)
+                            (filter (lambda (e) (= (starts-with (nth e 3) kprefix) 1)) page)
+                            more
+                            (if (= more 0) (read-or (string-append SX "/at") "") "")))))))))))))
 
   ; ── subscribers ───────────────────────────────────────────────────────
   (define field-subscribe (lambda (actor scope prefix)
