@@ -340,6 +340,12 @@ A unit whose root copy says `layout = "field"` (ticket 0064, doc
 - **Rollback** is a rollback request as in 6: its files are already blobs,
   so the runner puts nothing new, and its `deploy.done` makes the older
   version the served one.
+- **The limit, for now** (lux): web.wisp trusts a `deploy.done` signed by
+  the runner's identity, not the approval itself, and under F3/F4 another
+  key can be added to that identity or used from the daemon. So the root
+  copy refuses `layout = "field"` for a unit whose approvers include a
+  phone key, until web.wisp checks the `deploy.approve` against a
+  read-only copy of the root copy's approvers.
 
 ## 8a. Pages
 
