@@ -185,7 +185,33 @@ decides.
   be a decimal number. From a shell: `lib/chat ME pr-comment N PATH LINE
   TEXT`; on the page, the + beside a line.
 
-## 5. Conformance
+## 5. Notifications
+
+Through the mailbox (SPEC-mailbox), with no transport of its own: each is a
+`chat.msg` in the PR's branch, addressed beyond the branch's members by a
+`to` header, so it reaches the named people's mailboxes and, for colin, his
+phone (SPEC-mailbox 5). Nobody is told of their own action.
+
+| what | who hears | posted by |
+|---|---|---|
+| a `pr.approve` or `pr.decline` | the author | the merger |
+| a comment review | the author | its writer (`pr-review N comment`) |
+| a `pr.dismiss` that counts (section 2) | the author and the dismissed reviewer | the merger |
+| a `check.result` not `pass`, by the checker identity, at an open PR's head | the author | the merger |
+| a merge | the author | `pr-merge` |
+| a push past a review | everyone whose latest review is of an older head (once per head) | the merger |
+
+- **The author** is whoever posted the PR's first message (`pr-new` does).
+  Not a state key, which anyone in the branch could set to redirect them.
+- The merger (`pr-merge-asked`) keeps the ids it has told in
+  `run/pr/notified.json`. Its first run records what exists and tells
+  nothing, so history is not replayed.
+- **A notification is a hint.** Anyone can post a message with a `to`, so
+  each says what happened, names the signed event, and links the PR page,
+  whose state comes from the signed events alone (lux). Nothing in one is
+  to be acted on by itself.
+
+## 6. Conformance
 
 A PR reader MUST derive the head, the review state and the checks as
 sections 1 to 3 say. The cases are in `lib/chat`'s PR tests
