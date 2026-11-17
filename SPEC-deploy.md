@@ -40,7 +40,33 @@ envs = ["prod"]                 # and "staging" once it exists (section 9)
 - `checks` are commands run in a checkout of the commit on the desktop
   runner, as the deploy workflow's steps. Any failure stops the request.
 
-## 2. The unit list (root's)
+**The root copy: `/etc/field-deploy/units.toml` on the host,** owned by
+root, mode 644, and installed or changed only by a step colin runs (`lib/run
+propose desktop 'ssh server3 ...'`). It is the one file the runner trusts:
+
+```toml
+[unit.transit]
+approvers = ["<64 hex>", "<64 hex>"]   # keys that may approve this unit
+services  = []                         # services a deploy may restart
+
+[[unit.transit.path]]
+prefix = "/var/lib/theater-repl/fs/public/"
+owner  = "theater"
+mode   = "644"
+```
+
+- `approvers` are Ed25519 public keys, 64 lowercase hex. For a phone-tier
+  unit (private, field rules, anything under `/etc` or a `bin/`) they are
+  only colin's phone keys (SPEC-run 3).
+- Each `prefix` is an absolute directory ending in `/`. A prefix under
+  `/etc/`, `/var/lib/theater-repl/bin/`, `/var/lib/theater-repl/keys/` or
+  `/var/lib/theater-repl/secrets/` is allowed only in a unit whose approvers
+  are all phone keys.
+- `mode` is three octal digits; setuid, setgid and sticky are never set.
+- **It fails closed.** A root copy that breaks any rule above is refused as
+  a whole, and nothing is installed until colin fixes it.
+
+`/etc/field-deploy/STOP` is the stop switch (section 5a).
 
 The runner trusts one file, **the unit list**, and never the repo's
 `deploy/*.toml`. On server3 it is `/etc/field-deploy/units.toml`, owned by
@@ -99,15 +125,20 @@ env:
 | `deploy.done` | `deploy/<unit>` | the server3 runner key | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
 | `deploy.refused` | `deploy/<unit>` | the server3 runner key | `from`, `request`; text: the reason |
 
-- A request has no parents, and a link `blob <sha256> <size>
-  application/x-tar`. `expires` is its time plus 24 hours, unless the
-  workflow says otherwise.
-- `version` is one more than the highest `version` of the unit's
-  `deploy.done` events for that env (1 for the first). It names a deploy
-  for people and for rollback. The bundle sha256 is what binds.
-- `deploy.done` and `deploy.refused` have the request as their one parent.
-  A service that fails its 10 s check posts `deploy.refused` naming it, and
-  the files stay installed, so an approver can roll back at once.
+- `deploy.request` has a `link blob <sha256> <size> application/x-tar`.
+  `version` is one more than the unit's newest `deploy.done` for that env.
+- `deploy.approve` and `deploy.decline` have the request as their one
+  parent. The approval binds unit, env, commit, bundle and expiry, which
+  are copied from the request and signed with it (R2). It is used once.
+- Rules on both nodes: `deploy/ <runner keys>` for requests and results,
+  and `deploy/approve/<unit> <approver keys>` per unit, the same keys as
+  the root copy's. The per-unit lines are longer, so they decide alone for
+  approvals (SPEC-node 5), and an approver of one unit cannot approve
+  another. Until a unit has approvers, its line is
+  `deploy/approve/<unit> none`, and the scope is closed. The rules stop
+  honest mistakes; the root copy is the real check (as SPEC-run 2).
+- `from` in an approval names who approved, for people. The runner trusts
+  only the signing key.
 
 **Bundle layout** (fixed here because the install check depends on it): a
 POSIX tar. Each member is a regular file named by its **installed path
@@ -116,12 +147,72 @@ So the tar itself says where every file goes, and the runner checks that
 against the unit list, with no repo mapping to look up. The bundle's id is
 the sha256 of the tar's bytes.
 
-The tar MUST be reproducible, so the same commit always gives the same
-sha256 and anyone can rebuild it to check: members sorted by name, mtime 0,
-uid and gid 0, mode 0644, no other entries. The installer ignores those
-fields anyway (section 6).
+1. **A merge to master** runs the deploy workflow from master (never from
+   a branch or a PR: R4), on the desktop runner. For each unit and env, it
+   compares the unit's files at the merge with what the newest
+   `deploy.done` installed (by sha256), and stops for a unit with no
+   change.
+2. It runs the unit's `checks`, builds the bundle, puts the blob, and
+   posts `deploy.request`. A failing check posts nothing and says so in
+   the merge's PR.
+3. **An approver approves.**
+   - For transit, chat/docs and mail: the unit's lead or tova.
+   - For private, field rules, and anything under `/etc` or a `bin/`:
+     colin's phone key.
+   - Until (b), a unit that ships `.wisp` to the shared daemon reaches what
+     private reaches. That is the honest note of choice (a).
+4. **The host's runner** follows `deploy/approve/`. For each approval,
+   `check_approval` (lux's module) passes only if all of these hold, and
+   otherwise the runner posts `deploy.refused` with the first reason, once
+   per approval:
+   1. `/etc/field-deploy/STOP` does not exist (5a);
+   2. the root copy exists, passes section 1's rules, and lists the unit;
+   3. the approval's author is in **that unit's** `approvers` in the root
+      copy, and its signature checks (SPEC-node 2.4);
+   4. the runner holds the request; it is the approval's `request` and its
+      one parent, and it is in `deploy/<unit>`;
+   5. the approval's unit, env, commit, bundle and expires equal the
+      request's, and now is before `expires`;
+   6. no `deploy.decline` for the request is held;
+   7. the request was never installed: the runner writes the request id to
+      its ledger **before** installing, so a crash never installs it twice,
+      and a `deploy.done` for it in the field also counts.
 
-## 4. Approving: `deploy.approve`
+   Then `install_bundle` checks **every member before writing any**, so a
+   bundle installs whole or not at all:
+   - the blob's sha256 is the approved bundle's;
+   - each member is a regular file (no directory, symlink, hard link,
+     device or FIFO);
+   - its name, with `/` in front, is a normalized absolute path (no `.`,
+     `..` or empty component, no NUL, at most 4,096 bytes) under one of the
+     unit's prefixes;
+   - no directory between the prefix and the file is a symlink when it is
+     written (each directory is opened without following links);
+   - a `serve-*.wisp` start file is at most 4,096 bytes;
+   - **live drift** (0115): a file on the host that differs from what the
+     runner last installed there stops the whole install. It is checked
+     here, against the runner's own record of installed sums, so it fails
+     together with the other checks, before any write.
+
+   Each file is then written to a temp file in its directory, synced, given
+   the owner and mode of its prefix in the root copy (never the tar's), and
+   renamed into place, with the old one kept as `.prev`. The record of
+   installed sums is updated after the last rename.
+5. It restarts the unit's services, only those both the request and the
+   root copy name. Each must still be running, with no restart, 10 s
+   later, as deploy checks today. Then it posts `deploy.done`, or
+   `deploy.refused` with the first reason.
+6. A failed service check posts `deploy.refused` naming the service, and
+   leaves the files installed, so an approver can roll back at once.
+
+## 5a. The stop switch
+
+While `/etc/field-deploy/STOP` (root's) exists, the runner installs
+nothing and refuses each approval with `stopped`. colin creates or removes
+it with one colin-run step; it needs no code change. Under choice (a) an
+agent that is root can remove it too.
+
+## 6. Rollback
 
 | kind | scope | author | body |
 |---|---|---|---|
