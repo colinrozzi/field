@@ -584,20 +584,6 @@ is passed, not waited on (9.5). Before 2026-11-17 a refusal stopped that
 direction until the rules or WANTS changed, so one bad event could stop the
 sync.
 
-### 9.5 Refusals
-
-`field/peers/<name>.refused` holds one line per event the local node refused:
-`<id> <transient|final> <tries> <reason>`. A refusal whose reason says
-`missing parent` or `may not write` is **transient**: the parent, or the
-author's key or a rule, may still be on its way. On each later pull that
-finishes ("idle" or "copied"), the peer asks the remote for each transient
-one again (`get <id>`, 8.4) and admits it: admitted, the line goes; refused
-again, its tries count up, and after 12 it is **final**. Any other reason
-(a bad signature, a hash that doesn't match, a malformed event) is final at
-once. While any line is final the pull's label ends `; refused N
-(field/peers/<name>.refused)`, which field-watch reports. A final line stays
-until someone deletes it; nothing is ever admitted that the node refuses.
-
 ### 9.3 Waking
 
 A peer opens a `watch` (8.7) on each node it pulls from and pulls whenever
@@ -622,6 +608,20 @@ the desktop never reached server3). A blob it could not get (the remote
 lacks it, or the answer is wrong) goes in `field/peers/<name>.blobs` and is
 asked for again on each later pull, an idle one too. A missing blob never
 stops events: the event is admitted, its blob follows when it can.
+
+### 9.5 Refusals
+
+`field/peers/<name>.refused` holds one line per event the local node refused:
+`<id> <transient|final> <tries> <reason>`. A refusal whose reason says
+`missing parent` or `may not write` is **transient**: the parent, or the
+author's key or a rule, may still be on its way. On each later pull that
+finishes ("idle" or "copied"), the peer asks the remote for each transient
+one again (`get <id>`, 8.4) and admits it: admitted, the line goes; refused
+again, its tries count up, and after 12 it is **final**. Any other reason
+(a bad signature, a hash that doesn't match, a malformed event) is final at
+once. While any line is final the pull's label ends `; refused N
+(field/peers/<name>.refused)`, which field-watch reports. A final line stays
+until someone deletes it; nothing is ever admitted that the node refuses.
 
 ## 10. The gate
 
