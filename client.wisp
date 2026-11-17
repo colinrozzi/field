@@ -8,12 +8,17 @@
 ;   (field-after ADDR cursor scope kind)
 ;       -> (list cursor entries more), entries (id scope kind). scope, kind "" = all.
 ;          Call again at once when more is 1.
+;   (field-scope-after ADDR cursor keys kind)
+;       -> (list cursor entries more), entries (seq id scope kind), from the
+;          store's scope index (SPEC-node 8.11, 0159): keys a scope, a prefix
+;          ending in /, or several joined by commas; no walk of the seen chain.
+;          The cursor is the index's, not a seen event's.
 ;
 ; Events are built and signed here, by key name, so the store never holds an
 ; author's key: it only checks signatures. Each call opens a connection, so a
 ; session holds nothing between calls.
 (module client
-  (provide field-post field-post-to field-read field-after field-head FIELD)
+  (provide field-post field-post-to field-read field-after field-scope-after field-head FIELD)
   (require list "std/list.wisp")
   (require str "std/str.wisp")
 
@@ -105,6 +110,15 @@
 
   (define field-after (lambda (addr cursor scope kind)
     (let (r (ask addr (cat (list "follow " (dash cursor) " " (dash scope) " " (dash kind) "\n"))))
+      (if (= (list-get r 0) 0) (list cursor (list) 0)
+        (let (ls (lines (list-get r 1)))
+          (let (head (words (list-get ls 0)))
+            (list (if (string=? (list-get head 0) "-") "" (list-get head 0))
+                  (map words (drop-first ls))
+                  (string->number (list-get head 1)))))))))
+
+  (define field-scope-after (lambda (addr cursor keys kind)
+    (let (r (ask addr (cat (list "scope " (dash keys) " " (dash cursor) " " (dash kind) "\n"))))
       (if (= (list-get r 0) 0) (list cursor (list) 0)
         (let (ls (lines (list-get r 1)))
           (let (head (words (list-get ls 0)))

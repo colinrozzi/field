@@ -293,6 +293,7 @@ lives only in memory.
 | `field/gate-keys` | the nodes the gate lets in (section 10) |
 | `field/blobs/<sha[0:2]>/<sha[2:64]>` | a blob's bytes (7.1), written durably |
 | `field/peers/<name>.blobs` | sha256s a peer has yet to fetch, one per line (9.4) |
+| `field/scope-index/...` | the seen entries again, by scope (8.11); derived, so deleting it is safe: it is built again |
 
 Recording a seen event writes, in this order: the event file;
 `seen-first` (if there was no head) or `seen-next/<old head>`; `seen-head`;
@@ -486,6 +487,50 @@ for bulk. MAX-BLOB was 10 MB until 2026-11-17, when a put was found to cost
 the daemon some 270x its size in memory (each byte a boxed value across the
 host boundary): 10 MB would take server3's node to several GB. It goes back
 up once wisp fixes that.
+
+### 8.11 `scope <keys|-> <after|-> <kind|->`
+
+```
+-> scope chat/,group/ - -\n
+<- ok <n>\n<cursor> <more> <at|->\n<seq> <id> <scope> <kind>\n...
+```
+
+The seen entries (6) under any of `keys`, oldest first, read from the
+**scope index** instead of the seen chain. A key is a scope (`chat/main`),
+a prefix ending in `/` (`group/`), or `-` for all; up to 8 keys, joined by
+commas. `kind` keeps the entries whose kind starts with it. A page holds up
+to 256 entries (SCOPE-PAGE), fewer when several keys are read. `seq` numbers
+the entries in seen order, from 1, and the cursor is a seq: pass it back as
+`after`, and call again at once while `more` is 1. When `more` is 0, `at` is
+the seen event the index ends at, so a reader can go on from there with
+`pull` or `follow` having missed nothing (a new reader builds from `scope`,
+then streams with `pull`). Entries in `private/` scopes are left out, as in
+`follow`. More than 8 keys is `err`, `scope takes 1 to 8 keys`.
+
+The index lives in `field/scope-index/` (store.wisp). Each entry is kept
+under its scope, under every prefix of it ending in `/`, and under `-`, so
+any key is one append-only list, kept in chunks of 128 lines (a large string
+costs the daemon about 270x its size today, 0157). The store adds to it as
+it records seen events. A store from before it builds it the first time
+`scope` is asked: each call indexes up to 16 seen events and answers no
+entries, `more` 1, cursor unchanged, so a reader's normal loop drives it
+(611 calls, about 75 s, for the desktop's 9,500 events). The writes are not
+fsynced: after a power cut, delete `field/scope-index/` and it is built
+again. A crash between an append and the index's own cursor may index an
+entry twice, so readers take events idempotently, as they already must.
+
+Measured on a copy of the desktop's store (9,800 events, 2026-11-17), the
+whole read of one key:
+
+| read | follow / pull | scope |
+|---|---|---|
+| `mail/colin` (179) | 39 s | 0.1 s |
+| `doc/` (387) | 43 s | 0.3 s |
+| `group/` (935) | 50 s | 0.7 s |
+| `chat/main` (3,850) | 36 s | 2.9 s |
+| everything, ids only (9,800) | 81 s (pull, with files) | 7.4 s |
+
+Ticket 0159 added it.
 
 ## 9. Peers: following another node
 
