@@ -26,16 +26,24 @@
 ;   field/peers/<name>.watch   the open watch connection's id, or nothing
 ;   field/peers/<name>.blobs   blobs (sha256 lines) an admitted event links that
 ;                              could not be fetched yet; tried again each pull
-;   field/peers/<name>.refused events the local node refused (0137 follow-up,
-;                              the 11-17 stall): "<id> <transient|final> <tries>
-;                              <reason>" lines. A refusal no longer stops the
-;                              direction: the event is recorded, the cursor moves
-;                              past it, and the label says "refused N" while any
-;                              is final, for field-watch. A transient one (a
-;                              parent or an author key not here yet) is asked for
-;                              again (get) on later pulls, REFUSED-TRIES times,
-;                              then counts as final. Admission is as strict as
-;                              before: nothing is admitted that the node refuses.
+;   field/peers/<name>.refused events the local node refused (the 11-17 stall,
+;                              SPEC-node 9.5): "<id> <transient|final> <tries>
+;                              <next> <first> <reason>" lines, times in seconds.
+;                              A refusal no longer stops the direction: the event
+;                              is recorded, the cursor moves past it, and the
+;                              label says "refused N" while any is final, for
+;                              field-watch. A transient one (a parent or an
+;                              author key not here yet) is asked for again (get)
+;                              when its time comes, backing off from a minute to
+;                              an hour, and turns final a day after it was first
+;                              refused. (peer-retry-refused name) makes the
+;                              final ones transient again. At REFUSED-MAX lines
+;                              a new refusal is only counted (.refused-more, "N
+;                              more, not listed" in the label) and the pull goes
+;                              on, so no flood can stop the sync or fill the disk;
+;                              to retry those, clear the list and pull from the
+;                              start again (every admit is idempotent). Admission
+;                              is as strict as before.
 ;
 ; Blobs (SPEC-node 7.1): after admitting an event, the blobs it links (link
 ; blob <sha256> ...) that the local store lacks ("has-blob") are fetched from
@@ -44,10 +52,12 @@
 ; reached by request, never this session's own disk, so a pull with the ends
 ; swapped (the desktop's server3-push) carries blobs too (ticket 0137).
 (module peer
-  (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch)
+  (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch peer-retry-refused)
+  (require str "std/str.wisp")   ; u64->string
 
   (define PULLS 8)   ; pages per peer-pull call
-  (define REFUSED-TRIES 12)   ; later pulls that ask again for a transient refusal
+  (define REFUSED-FINAL 86400)   ; seconds after the first refusal that a transient one turns final
+  (define REFUSED-MAX 1000)      ; lines in .refused before the direction stops
 
   (define find-byte (lambda (s b i) (string-index s b i)))
   (define b-nl (string-ref "\n" 0))
@@ -217,6 +227,9 @@
   (define has-sub (lambda (s pat i)
     (if (< (string-len s) (+ i (string-len pat))) 0
       (if (string=? (substring s i (+ i (string-len pat))) pat) 1 (has-sub s pat (+ i 1))))))
+  ; seconds now: the u64 milliseconds less their last three digits (an s32
+  ; until 2038)
+  (define now-s (lambda () (let (t (u64->string (now))) (digits-from (substring t 0 (- (string-len t) 3)) 0 0))))
   ; a reason another event or key arriving can cure
   (define transient? (lambda (why) (if (= (has-sub why "missing parent" 0) 1) 1 (has-sub why "may not write" 0))))
   ; the node didn't answer at all: not a refusal, so the page is tried again
@@ -225,36 +238,76 @@
   (define one-line (lambda (s i acc)
     (if (>= i (string-len s)) acc
       (one-line s (+ i 1) (string-append acc (if (= (string-ref s i) b-nl) " " (substring s i (+ i 1))))))))
-  (define refused-lines (lambda (name) (split-from (match (fs-read-text (refused-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list))))
+  (define refused-text (lambda (name) (match (fs-read-text (refused-path name)) ((ok t) t) ((err e) ""))))
+  (define refused-lines (lambda (name) (split-from (refused-text name) b-nl 0 (list))))
+  ; the wait before the next ask after tries asks: a minute, doubling, at most an hour
+  (define backoff (lambda (tries) (if (< 5 tries) 3600 (* 60 (pow2 tries)))))
+  (define pow2 (lambda (n) (if (= n 0) 1 (* 2 (pow2 (- n 1))))))
+  (define refused-line (lambda (id class tries next first why)
+    (string-append id " " class " " (num->str tries) " " (num->str next) " " (num->str first) " " (one-line why 0 ""))))
+  ; is id one of the lines' (each starts with its id)?
+  (define known-id? (lambda (ls id)
+    (if (null? ls) 0
+      (if (and (<= 64 (string-len (car ls))) (string=? (substring (car ls) 0 64) id)) 1 (known-id? (cdr ls) id)))))
+  (define more-path (lambda (name) (string-append "field/peers/" name ".refused-more")))
+  (define more-count (lambda (name) (match (fs-read-text (more-path name)) ((ok t) (digits-from t 0 0)) ((err e) 0))))
+  ; record a refusal -> "known", "recorded", or "counted" (past the cap)
   (define refuse (lambda (name id why)
-    (if (= (has-sub (match (fs-read-text (refused-path name)) ((ok t) t) ((err e) "")) id 0) 1) "known"
-      (fs-append (refused-path name)
-        (string-append id (if (= (transient? why) 1) " transient 0 " " final 0 ") (one-line why 0 "") "\n")))))
+    (let (ls (refused-lines name))
+      (if (= (known-id? ls id) 1) "known"
+        (if (<= REFUSED-MAX (length ls))
+          (begin (fs-write (more-path name) (num->str (+ (more-count name) 1))) "counted")
+          (let (now (now-s))
+            (begin
+              (fs-append (refused-path name)
+                (string-append (if (= (transient? why) 1) (refused-line id "transient" 0 (+ now 60) now why) (refused-line id "final" 0 0 now why)) "\n"))
+              "recorded")))))))
   ; final refusals on record
   (define refused-final (lambda (ls n)
     (if (null? ls) n
-      (refused-final (cdr ls) (if (= (has-sub (car ls) " final " 64) 1) (+ n 1) n)))))
-  ; ask the remote again for each transient refusal: admitted -> dropped;
-  ; refused again -> one more try, final after REFUSED-TRIES
-  (define retry-one (lambda (remote local l)
+      (refused-final (cdr ls) (if (and (<= 71 (string-len (car ls))) (string=? (substring (car ls) 64 71) " final ")) (+ n 1) n)))))
+  ; one line, asked again if it is transient and its time has come: admitted
+  ; -> "" (dropped); refused again -> its next try later, final a day after
+  ; the first refusal. In recorded order, so a parent comes back before the
+  ; children that wait on it.
+  (define retry-one (lambda (remote local now l)
     (let (w (split-from l b-space 0 (list)))
-      (if (or (< (length w) 3) (not (string=? (list-get w 1) "transient"))) l
+      (if (or (< (length w) 6) (not (string=? (list-get w 1) "transient")) (< now (digits-from (list-get w 3) 0 0))) l
         (let (f (peer-request remote (string-append "get " (list-get w 0) "\n")))
           (let (r (if (= (list-get f 0) 1) (admit-file local (list-get f 1)) "admit: the remote no longer serves it"))
             (if (string=? r "") ""
-              (let (t (+ (digits-from (list-get w 2) 0 0) 1))
-                (string-append (list-get w 0) (if (< t REFUSED-TRIES) " transient " " final ") (num->str t) " " (one-line r 0 ""))))))))))
-  (define retry-lines (lambda (remote local ls acc)
+              (let (tries (+ (digits-from (list-get w 2) 0 0) 1))
+                (let (first (digits-from (list-get w 4) 0 0))
+                  (if (<= REFUSED-FINAL (- now first)) (refused-line (list-get w 0) "final" tries 0 first r)
+                    (refused-line (list-get w 0) "transient" tries (+ now (backoff tries)) first r)))))))))))
+  (define retry-lines (lambda (remote local now ls acc)
     (if (null? ls) acc
-      (let (l (retry-one remote local (car ls)))
-        (retry-lines remote local (cdr ls) (if (string=? l "") acc (string-append acc l "\n")))))))
+      (let (l (retry-one remote local now (car ls)))
+        (retry-lines remote local now (cdr ls) (if (string=? l "") acc (string-append acc l "\n")))))))
   (define retry-refused (lambda (name remote local)
     (let (ls (refused-lines name))
-      (if (null? ls) "none" (fs-write (refused-path name) (retry-lines remote local ls ""))))))
-  ; the label, with "; refused N" while any refusal is final
+      (if (null? ls) "none" (fs-write (refused-path name) (retry-lines remote local (now-s) ls ""))))))
+  ; by hand: every final refusal of name becomes transient, asked again on the
+  ; next pull -> how many
+  (define unfinal (lambda (ls now acc n)
+    (if (null? ls) (list acc n)
+      (let (w (split-from (car ls) b-space 0 (list)))
+        (if (and (< 5 (length w)) (string=? (list-get w 1) "final"))
+          (unfinal (cdr ls) now (string-append acc (refused-line (list-get w 0) "transient" 0 now now
+                                                     (substring (car ls) (+ 5 (string-len (string-append (list-get w 0) (list-get w 1) (list-get w 2) (list-get w 3) (list-get w 4)))) (string-len (car ls)))) "\n") (+ n 1))
+          (unfinal (cdr ls) now (string-append acc (car ls) "\n") n))))))
+  (define peer-retry-refused (lambda (name)
+    (let (r (unfinal (refused-lines name) (now-s) "" 0))
+      (begin (fs-write (refused-path name) (car r)) (list-get r 1)))))
+  ; the label, with "; refused N" while any refusal is final, and a note when
+  ; the list is full
   (define with-refused (lambda (name label)
-    (let (n (refused-final (refused-lines name) 0))
-      (if (= n 0) label (string-append label "; refused " (num->str n) " (" (refused-path name) ")")))))
+    (let (ls (refused-lines name))
+      (let (n (refused-final ls 0))
+        (string-append label
+          (if (= n 0) "" (string-append "; refused " (num->str n) " (" (refused-path name) ")"))
+          (if (= (more-count name) 0) "" (string-append "; refused " (num->str (more-count name)) " more, not listed"))
+          (if (<= REFUSED-MAX (length ls)) "; refused list full" ""))))))
 
   ; admit the records of a pull payload p from i -> "" or what stopped it: a
   ; framing error, or the node not answering. A record the node refuses is
@@ -271,7 +324,8 @@
                             (admit-file local (substring p (+ j 1) end)) ""))
                     (if (string=? r "") (admit-records name local p end wants)
                       (if (= (transport? r) 1) r
-                        (begin (refuse name (list-get w 0) r) (admit-records name local p end wants))))))))))))))
+                        (begin (refuse name (list-get w 0) r)
+                          (admit-records name local p end wants))))))))))))))
   ; the blobs the wanted records of p from i link, added to acc
   (define record-blobs (lambda (p i wants acc)
     (let (j (find-byte p b-nl i))
@@ -301,7 +355,7 @@
                         (if (string=? (list-get head 1) "1")
                           (if (< 1 k) (pull-on name remote local wants (- k 1)) "more")
                           (begin (retry-refused name remote local) (with-refused name "copied"))))
-                      "copy failed")))))))))))
+                      (with-refused name "copy failed"))))))))))))
 
   ; Open both connections and pull until caught up or PULLS pages -> a label:
   ; "more" (call again soon), "copied", "idle", or what failed.
