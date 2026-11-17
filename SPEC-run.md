@@ -149,8 +149,9 @@ run/approve/ <approver key>
 
 ## 4. The runner
 
-One per host. **The desktop's is built** (experiment `lib/runner`, a user
-service from `lib/runner-install`, as colin). server3's own comes after
+One per host. **The desktop's is built**: experiment `lib/runner`, which
+`sudo lib/runner-install` copies to `/etc/field-runner/` (root-owned) and
+runs as colin from a system unit in `/etc/nixos/configuration.nix`. server3's own comes after
 ticket 0130. Until then, a command for server3 is proposed for the desktop
 as `ssh server3 ...` (tova, 2026-11-16).
 
@@ -159,16 +160,17 @@ proposal only if all of these hold:
 
 1. The approval's author is in the runner's own list of approver keys, and
    the event's signature checks (SPEC-node 2.4).
-   - On the desktop, the list is `~/.config/field-runner/approvers`.
+   - On the desktop, the list is `/etc/field-runner/approvers` (root's).
    - On server3 it will be a root-owned file under `/etc`.
 2. The runner holds the proposal, and the proposal is both the approval's
    `proposal` and its one parent. The proposal's scope is `run/<this host>`,
    and its `host` is this host.
 3. The approval's `host`, `expires` and `command` match the proposal.
    `command` is the sha256 of the command's bytes as the runner reads them.
-4. The runner has not run that proposal before (it keeps the ids it ran, and
-   records each one before running it, so a crash never runs a proposal
-   twice).
+4. The runner has not run that proposal before. It keeps the ids it ran,
+   and records each one before running it, so a crash never runs a proposal
+   twice. A `run.result` for the proposal in the field (other than `exit
+   refused`) also counts, so losing that record doesn't run it again.
 5. Now is before `expires`.
 6. The runner holds no `run.decline` for the proposal. A decline at any
    time closes it.
@@ -180,12 +182,20 @@ the user's home directory. Then it posts `run.result` as its own identity,
 refusal goes in its log, and the full output in `log/<proposal>.out` and
 `.err`.
 
-The desktop runner runs as colin, which agents already are, so it is a
-convenience, not a gate. It does what a terminal `!` step does, from the
-phone. Its approver list is colin's file, and agents can edit it. The rules
-and the phone key make "colin approved this exact text" impossible to fake
-by accident. Making it impossible to fake on purpose needs server3's runner
-behind 0130.
+The desktop runner runs as colin, which agents already are. It does what a
+terminal `!` step does, from the phone. Everything it **trusts** is out of
+colin's user's reach, and so out of agents' reach (tova's review):
+
+- its code, a root-owned copy;
+- its approver list, root's;
+- its unit, in root's NixOS configuration.
+
+Updating it is `sudo lib/runner-install` again, a step for colin.
+
+What it **keeps** is colin's: its state and the field store. So an agent
+can stop it, hide a decline, or break its runs. It can't make a run,
+because every run needs an approval signed by a listed key, and those keys
+are in colin's phone.
 
 ## 5. Writing from the page
 
