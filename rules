@@ -23,3 +23,5 @@ run/ id
 run/approve/ none
 check/ id
 pr/approve/experiment 1908c021edbb19d46c8474cac5cd50731a097a822628c26345491b70ec514082
+system/ask/ id
+system/answer/ id
