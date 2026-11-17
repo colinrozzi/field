@@ -39,10 +39,32 @@ today's MANIFEST in `site/server3/deploy`. A file belongs to at most one
 unit.
 
 **The root copy: `/etc/field-deploy/units.toml` on the host,** owned by
-root and installed by a step colin runs (`lib/run propose`). For each unit
-it lists `approvers` (64-hex keys), `services` it may restart, and `paths`,
-a list of `{prefix, owner, mode}`. `/etc/field-deploy/STOP` existing stops
-every install (R8).
+root, mode 644, and installed or changed only by a step colin runs (`lib/run
+propose desktop 'ssh server3 ...'`). It is the one file the runner trusts:
+
+```toml
+[unit.transit]
+approvers = ["<64 hex>", "<64 hex>"]   # keys that may approve this unit
+services  = []                         # services a deploy may restart
+
+[[unit.transit.path]]
+prefix = "/var/lib/theater-repl/fs/public/"
+owner  = "theater"
+mode   = "644"
+```
+
+- `approvers` are Ed25519 public keys, 64 lowercase hex. For a phone-tier
+  unit (private, field rules, anything under `/etc` or a `bin/`) they are
+  only colin's phone keys (SPEC-run 3).
+- Each `prefix` is an absolute directory ending in `/`. A prefix under
+  `/etc/`, `/var/lib/theater-repl/bin/`, `/var/lib/theater-repl/keys/` or
+  `/var/lib/theater-repl/secrets/` is allowed only in a unit whose approvers
+  are all phone keys.
+- `mode` is three octal digits; setuid, setgid and sticky are never set.
+- **It fails closed.** A root copy that breaks any rule above is refused as
+  a whole, and nothing is installed until colin fixes it.
+
+`/etc/field-deploy/STOP` is the stop switch (section 5a).
 
 ## 2. What the root copy decides
 
@@ -79,7 +101,13 @@ A bundle is a tar of the unit's files **at one commit**:
   are copied from the request and signed with it (R2). It is used once.
 - Rules on both nodes: `deploy/ <runner keys>` for requests and results,
   and `deploy/approve/<unit> <approver keys>` per unit, the same keys as
-  the root copy's.
+  the root copy's. The per-unit lines are longer, so they decide alone for
+  approvals (SPEC-node 5), and an approver of one unit cannot approve
+  another. Until a unit has approvers, its line is
+  `deploy/approve/<unit> none`, and the scope is closed. The rules stop
+  honest mistakes; the root copy is the real check (as SPEC-run 2).
+- `from` in an approval names who approved, for people. The runner trusts
+  only the signing key.
 
 ## 5. The flow
 
@@ -97,28 +125,56 @@ A bundle is a tar of the unit's files **at one commit**:
      colin's phone key.
    - Until (b), a unit that ships `.wisp` to the shared daemon reaches what
      private reaches. That is the honest note of choice (a).
-4. **The host's runner** follows `deploy/approve/`. For each approval it
-   runs `check_approval`, then `install_bundle` (lux's module):
-   - the STOP file is absent;
-   - the signer is one of the unit's approvers in the root copy;
-   - the approval's one parent is the request, and unit, env, commit,
-     bundle and expiry match it, and now is before `expires`;
-   - the request has not been installed before (a ledger, written before
-     installing);
+4. **The host's runner** follows `deploy/approve/`. For each approval,
+   `check_approval` (lux's module) passes only if all of these hold, and
+   otherwise the runner posts `deploy.refused` with the first reason, once
+   per approval:
+   1. `/etc/field-deploy/STOP` does not exist (5a);
+   2. the root copy exists, passes section 1's rules, and lists the unit;
+   3. the approval's author is in **that unit's** `approvers` in the root
+      copy, and its signature checks (SPEC-node 2.4);
+   4. the runner holds the request; it is the approval's `request` and its
+      one parent, and it is in `deploy/<unit>`;
+   5. the approval's unit, env, commit, bundle and expires equal the
+      request's, and now is before `expires`;
+   6. no `deploy.decline` for the request is held;
+   7. the request was never installed: the runner writes the request id to
+      its ledger **before** installing, so a crash never installs it twice,
+      and a `deploy.done` for it in the field also counts.
+
+   Then `install_bundle` checks **every member before writing any**, so a
+   bundle installs whole or not at all:
    - the blob's sha256 is the approved bundle's;
-   - every member is a regular file whose normalized name lies under one
-     of the unit's prefixes, with no `..` and no link;
+   - each member is a regular file (no directory, symlink, hard link,
+     device or FIFO);
+   - its name, with `/` in front, is a normalized absolute path (no `.`,
+     `..` or empty component, no NUL, at most 4,096 bytes) under one of the
+     unit's prefixes, and the request's file list names it;
+   - no directory between the prefix and the file is a symlink when it is
+     written (each directory is opened without following links);
    - a `serve-*.wisp` start file is at most 4,096 bytes;
-   - a file on the host that differs from what the runner last installed
-     there (live drift, 0115) stops the install;
-   - each file is written to a temp file and renamed into place, with the
-     old one kept as `.prev`, and its owner and mode from the root copy.
+   - **live drift** (0115): a file on the host that differs from what the
+     runner last installed there stops the whole install. It is checked
+     here, against the runner's own record of installed sums, so it fails
+     together with the other checks, before any write.
+
+   Each file is then written to a temp file in its directory, synced, given
+   the owner and mode of its prefix in the root copy (never the tar's), and
+   renamed into place, with the old one kept as `.prev`. The record of
+   installed sums is updated after the last rename.
 5. It restarts the unit's services, only those both the request and the
    root copy name. Each must still be running, with no restart, 10 s
    later, as deploy checks today. Then it posts `deploy.done`, or
    `deploy.refused` with the first reason.
 6. A failed service check posts `deploy.refused` naming the service, and
    leaves the files installed, so an approver can roll back at once.
+
+## 5a. The stop switch
+
+While `/etc/field-deploy/STOP` (root's) exists, the runner installs
+nothing and refuses each approval with `stopped`. colin creates or removes
+it with one colin-run step; it needs no code change. Under choice (a) an
+agent that is root can remove it too.
 
 ## 6. Rollback
 
