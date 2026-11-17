@@ -158,6 +158,22 @@ A bundle is a tar of the unit's files **at one commit**:
      approvers in the root copy and in its `deploy/approve/<unit>` rules
      line, so turning it on is those two lines plus `auto = true`. No unit
      has it yet.
+   - **Before any unit gets `auto = true`** (lux), since then no person
+     looks at the request:
+     1. The request's commit MUST be master's: the deploy workflow fetches
+        and refuses unless the commit is the tip of `refs/heads/master` on
+        server3. Checks run on every branch push, so without this a branch
+        with green checks would deploy unreviewed code.
+     2. The bundle MUST be the commit's content: built from git (`git
+        archive` or `git show <commit>:<path>`), never from a working tree,
+        and a dirty tree is refused. Otherwise edits the checks never saw
+        ship under a green commit.
+     3. Later: the server3 runner rebuilds the deterministic tar from
+        server3's bare repo at that commit and refuses a bundle whose
+        sha256 differs, so even a wrong bundle from the desktop can't
+        install.
+     These matter less while tova approves each request by hand, after
+     looking at it.
    - An approval by tova's key can be made by any agent on the desktop
      (SPEC-id 5). That is the honest note of choice (a).
 4. **The host's runner** follows `deploy/approve/`. For each approval,
