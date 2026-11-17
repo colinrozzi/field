@@ -156,6 +156,15 @@ A bundle is a tar of the unit's files **at one commit**:
      earlier rule that a unit serving HTML or JS on colinrozzi.com is
      phone-only is retired, and can come back the same way.
    - Run proposals (commands run as colin, SPEC-run) stay phone-only.
+   - **The approve unit stays on colin's phone** (tova, 2026-11-17): its page
+     holds his approver key and is what keeps run proposals phone-only, so
+     code there approved by tova would undo that. It is its own
+     service (serve-approve.wisp, :8084, Caddy sends the origin there), so
+     nothing in the live unit can answer approve.colinrozzi.com; while that
+     origin was served through live.wisp, the live unit could change it too
+     (lux, 2026-11-17).
+   - When 0130 removes agents' root on server3, approve and config
+     must move to the phone tier in the same step, or 0130 closes nothing.
    - **Auto-approval** (beck): for a unit whose `deploy/<unit>.toml` says
      `auto = true`, the deploy workflow waits, after posting the request,
      for the merge commit's newest `check.result` signed by a current key of
