@@ -219,8 +219,18 @@ in three ways:
   with the supervisor's step and reason from a failure. In that case the
   supervisor has already left version n-1 serving.
 
+**A version directory is written once, and never again** (lux):
+- the runner refuses a request whose `units/<unit>/<env>/<n>/` already
+  exists;
+- it writes the bundle into a temporary directory beside it and renames it
+  into place, so a half-written version is never visible;
+- after that the directory is read-only to the service user: directories
+  555, files the root copy's mode without write bits (444 by default).
+
 A rollback to version V is then `deploy <unit> V` of a bundle still on
-disk. The request and approval stay as in section 6, so a rollback is still
+disk, after the runner checks that the files there still match the bundle
+sha256 that V's `deploy.done` names. If an old version could change, "roll
+back to V" would stop meaning the bundle that was approved. The request and approval stay as in section 6, so a rollback is still
 one signed tap. In-place units (anything not run by a supervised child, such
 as `/etc` files) keep the in-place install.
 
