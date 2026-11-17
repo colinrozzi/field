@@ -28,7 +28,7 @@
 ; deploy.request, deploy.done and deploy.refused in deploy/<unit> (SPEC-deploy),
 ; signed by the runners' (never deploy/approve/: approvals are an approver's);
 ; release.request in release/<repo> (SPEC-release), signed by the runner's
-; identity (never release/approve/, which only an approver's key signs). pr.approve and pr.decline in pr/approve/<repo>
+; identity (never release/approve/, which only an approver's key signs). pr.approve, pr.decline and pr.dismiss in pr/approve/<repo>
 ; (field/SPEC-pr.md), signed with id.<from> like chat: the rules say whose
 ; keys may approve each repo. system.ask in system/ask/<host> and system.answer
 ; in system/answer/<host> (experiment 0090: a read-only question about a
@@ -65,7 +65,7 @@
   (define kind-ok? (lambda (k)
     (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
                     "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire" "git.push" "run.propose" "run.result"
-                    "check.start" "check.result" "pr.approve" "pr.decline" "system.ask" "system.answer"
+                    "check.start" "check.result" "pr.approve" "pr.decline" "pr.dismiss" "system.ask" "system.answer"
                     "action.job" "action.start" "action.result"
                     "deploy.request" "deploy.done" "deploy.refused" "release.request") string=?)))
 
@@ -77,7 +77,7 @@
           (if (and (< 3 (string-len k)) (string=? (substring k 0 3) "id.")) "id/"
             (if (string=? k "git.push") "git/" (if (or (string=? k "run.propose") (string=? k "run.result")) "run/"
               (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "check.")) "check/"
-                (if (or (string=? k "pr.approve") (string=? k "pr.decline")) "pr/approve/"
+                (if (or (string=? k "pr.approve") (or (string=? k "pr.decline") (string=? k "pr.dismiss"))) "pr/approve/"
                   (if (string=? k "system.ask") "system/ask/" (if (string=? k "system.answer") "system/answer/"
                     (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "action.")) "actions/"
                       (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "deploy.")) "deploy/"
@@ -157,7 +157,7 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, system.ask, system.answer, action.job, action.start, action.result, deploy.request, deploy.done, deploy.refused or release.request")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, deploy.request, deploy.done, deploy.refused or release.request")
                   (if (or (= (in-scope? thread "run/approve/") 1) (or (= (in-scope? thread "deploy/approve/") 1) (= (in-scope? thread "release/approve/") 1))) (reply "err" "run/approve/, deploy/approve/ and release/approve/ take only events signed with an approver key")
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))

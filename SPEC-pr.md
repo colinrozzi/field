@@ -29,6 +29,7 @@ MUST, SHOULD and MAY are as in RFC 2119. Names are SPEC-chat 5.1's. A
 | `base` | the branch it merges into: the repo's default branch on server3, its `HEAD` (`refs/heads/master` for experiment, `refs/heads/main` for wisp) |
 | `status` | `open`, `merged` or `closed` |
 | `ticket` | optional: the ticket it does. Merging sets that ticket to `done` |
+| `draft` | `yes` for a draft: never merged, auto-merge and re-review pings skip it, and lists mark it. `""` when it is ready (`pr-new --draft`, `pr-set N draft ''`) |
 
 A branch whose state has a non-empty `pr` is a PR. A PR branch has no
 `n`, so it is never a ticket. Its first message is written by `pr-new`: the
@@ -51,17 +52,35 @@ when needed, from the repo on server3.
 | kind | scope | author | body |
 |---|---|---|---|
 | `pr.approve` | `pr/approve/REPO` | one of REPO's approver keys | headers `from`, `pr N`, `repo`, `ref`, `head SHA`; blank line; an optional note |
-| `pr.decline` | `pr/approve/REPO` | one of REPO's approver keys | headers `from`, `pr N`, `repo`, `ref`, `head SHA`; blank line; what to change |
+| `pr.decline` | `pr/approve/REPO` | one of REPO's approver keys | headers `from`, `pr N`, `repo`, `ref`, `head SHA`; blank line; what to change (a request for changes) |
+| `pr.dismiss` | `pr/approve/REPO` | the request's own author, or colin's phone key | headers `from`, `pr N`, `repo`, `ref`, `review ID` (a `pr.decline`); blank line; the reason, not empty |
 
 - No parents. An approval names everything it approves in its own headers,
   and those are signed with it (SPEC-node 2.3, 2.4).
 - `head` is the exact commit approved. The approval holds only while it is
   the PR's head: after another push the PR shows "approved at <head>,
   now at <newer>", and needs a new approval.
-- `pr.decline` asks for changes. It closes nothing. The newer of the newest
-  approval and the newest decline for the current head is the PR's review
-  state. Compare by event `time`, then id.
-- The note or reason MAY be empty, and is at most what the node takes.
+- **A review is per reviewer** (tova, 2026-11-17). Each approver key's
+  newest `pr.approve` or `pr.decline` for the PR (by `time`, then id) is
+  that reviewer's state: *approved* if its `head` is the PR's head, *stale*
+  if an older head, *changes* for a `pr.decline`, or *dismissed* for a
+  `pr.decline` that a valid `pr.dismiss` names.
+- **A request for changes outlives pushes.** It holds until the same
+  reviewer approves, or it is dismissed. A `pr.dismiss` counts only if it
+  names a `pr.decline` in the same scope for the same PR, has a reason, and
+  is signed by that request's author or by colin's phone key (SPEC-run 3).
+  So anyone may withdraw their own, colin may dismiss anyone's, and no
+  other key may dismiss colin's (lux). A dismissed request stays on the
+  page with its reason.
+- **The PR's review state:** *changes* if any reviewer's state is changes;
+  else *approved* if any is approved; else *stale* if any is stale; else
+  *waiting*.
+- **A comment review** is a `chat.msg` in the PR's branch with headers
+  `review comment` and `at SHA`, from anyone in the branch. It is shown
+  with the reviews, and never counts toward a state, even an approver's:
+  only the signed events above do.
+- The note MAY be empty, and is at most what the node takes. A decline's
+  and a dismissal's MUST NOT be.
 
 **Approver keys are per repo.** The rules (SPEC-node 4) carry one line per
 key:
@@ -83,9 +102,11 @@ pr/approve/field <colin's phone approver key>
   starts with another repo's name MUST get its own lines, which, being
   longer, then decide alone.
 - tova approves through node-chat, which signs with `id.tova` like any of
-  tova's events (`lib/chat tova pr-approve N`). colin approves on the PR page,
-  signed in his phone's browser as `run.approve` is (SPEC-run 3, 5), and
-  posted through `/personal/live/admit`.
+  tova's events (`lib/chat tova pr-review N approve|changes|comment TEXT`,
+  `pr-dismiss N ID REASON`). colin approves or asks for changes on
+  approve.colinrozzi.com, which the PR page links to, signed in his phone's
+  browser as `run.approve` is (SPEC-run 3, 5). He clears his own request by
+  approving; a dismissal from the phone comes with that page later.
 - The honest limit: a desktop identity key, like tova's, can be used by
   any session in the desktop daemon (SPEC-id 5). So an experiment
   approval keeps honest mistakes out, and makes it plain who approved. A
@@ -98,9 +119,10 @@ pr/approve/field <colin's phone approver key>
 1. `status` is `open`.
 2. The PR has a head, and server3's branch is at that head
    (`git ls-remote`).
-3. The newest review event for that head is a `pr.approve`, its author is
-   on the repo's approver lines in this node's rules, and it is in the
-   node (the node checked its signature on admission).
+3. It is not a draft, and its review state (section 2) is *approved*: an
+   approver on the repo's lines in this node's rules approved that head,
+   and no approver's request for changes stands. Every event counted is in
+   the node, which checked its signature on admission.
 4. When checks are expected: the newest `check.result` in `check/REPO`
    whose `commit` is the head has `status pass`. Checks are expected once
    the repo has any check events, or when the head carries the checks
@@ -141,8 +163,11 @@ decides.
 ## 4. The page
 
 - `/personal/prs` lists the open PRs: number, title, repo, author, head
-  (short), checks (pass, fail, running, or none) and review state
-  (approved, changes asked, stale, waiting).
+  (short), checks (pass, fail, running, or none), review state
+  (approved, changes asked, stale, waiting), and *draft*.
+- A PR's panel has a row per reviewer: name, state, the head reviewed,
+  the note, and for a dismissed request who dismissed it and why. Comment
+  reviews are listed with them.
 - A PR's page is its branch, with a panel on top: the diffstat, a link to
   the diff, the checks with their log link, and Approve and Request
   changes buttons, shown only to an approver of that repo.
