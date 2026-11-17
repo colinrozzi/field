@@ -2,7 +2,8 @@
 
 Status: ticket 0112, 2026-11-15 (beck). From the design document
 `approve-and-run` (decided, colin). The events, the rules and the page come
-first; the runner comes after server3's hardening (ticket 0130).
+first, then the desktop's runner; server3's runner comes after its
+hardening (ticket 0130).
 
 An agent **proposes** a command for a host. Only colin **approves** it,
 signing in his phone's browser with a key that never leaves it. The host's
@@ -20,7 +21,7 @@ line, then text (SPEC-chat 4.1), with `from NAME` first. Times are ms since
 | `run.propose` | `run/<host>` | the proposer's identity key (rules `id`) | headers `from`, `host`, `expires`, `why`, `to colin`; blank line; the command |
 | `run.approve` | `run/approve/<host>` | an **approver key** | headers `from colin`, `proposal`, `host`, `expires`, `command` |
 | `run.decline` | `run/approve/<host>` | an approver key | headers `from colin`, `proposal`; blank line; the reason |
-| `run.result` | `run/<host>` | the runner's identity key | headers `from`, `proposal`, `exit`, `stdout`, `stderr`, `cut`; blank line; stdout then stderr |
+| `run.result` | `run/<host>` | the runner's identity key (`runner.<host>`) | headers `from`, `proposal`, `exit`, `stdout`, `stderr`, `cut`; blank line; stdout then stderr |
 
 ### 1.1 `run.propose`
 
@@ -148,27 +149,43 @@ run/approve/ <approver key>
 
 ## 4. The runner
 
-**Later, after ticket 0130.** One per host, a systemd service as the user
-its config names. It follows `run/approve/<host>`. For each `run.approve`
-it runs the proposal only if all of these hold:
+One per host. **The desktop's is built** (experiment `lib/runner`, a user
+service from `lib/runner-install`, as colin). server3's own comes after
+ticket 0130. Until then, a command for server3 is proposed for the desktop
+as `ssh server3 ...` (tova, 2026-11-16).
 
-1. the approval's author is in the runner's own list of approver keys (a
-   root-owned file on server3, under `/etc`), and its signature checks;
-2. it holds the proposal, the approval's `proposal` is its id, and the
-   proposal's scope is `run/<this host>` and its `host` is this host;
-3. `host`, `expires` and `command` match the proposal: the command's sha256
-   over its bytes as the runner reads them;
-4. now is before `expires`;
-5. it has not run that proposal before, and no `run.decline` for it is
-   older than the approval. The runner keeps the ids it ran in its state
-   directory.
+The runner follows `run/approve/<host>`. For each `run.approve` it runs the
+proposal only if all of these hold:
 
-It runs the command with `bash -c`, with no stdin and a 10-minute timeout,
-and posts `run.result`. Otherwise it posts `run.result` with `exit refused`
-and the reason, once per approval.
+1. The approval's author is in the runner's own list of approver keys, and
+   the event's signature checks (SPEC-node 2.4).
+   - On the desktop, the list is `~/.config/field-runner/approvers`.
+   - On server3 it will be a root-owned file under `/etc`.
+2. The runner holds the proposal, and the proposal is both the approval's
+   `proposal` and its one parent. The proposal's scope is `run/<this host>`,
+   and its `host` is this host.
+3. The approval's `host`, `expires` and `command` match the proposal.
+   `command` is the sha256 of the command's bytes as the runner reads them.
+4. The runner has not run that proposal before (it keeps the ids it ran, and
+   records each one before running it, so a crash never runs a proposal
+   twice).
+5. Now is before `expires`.
+6. The runner holds no `run.decline` for the proposal. A decline at any
+   time closes it.
 
-A desktop runner runs as colin, which agents already are. It is a
-convenience, not a gate.
+It runs the command with `bash -c`, with no stdin, a 10-minute timeout, in
+the user's home directory. Then it posts `run.result` as its own identity,
+`runner.<host>`, through node-chat. A failed check posts `run.result` with
+`exit refused` and the reason in stderr, once per approval. Every run and
+refusal goes in its log, and the full output in `log/<proposal>.out` and
+`.err`.
+
+The desktop runner runs as colin, which agents already are, so it is a
+convenience, not a gate. It does what a terminal `!` step does, from the
+phone. Its approver list is colin's file, and agents can edit it. The rules
+and the phone key make "colin approved this exact text" impossible to fake
+by accident. Making it impossible to fake on purpose needs server3's runner
+behind 0130.
 
 ## 5. Writing from the page
 
