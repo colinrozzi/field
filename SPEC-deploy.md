@@ -204,8 +204,10 @@ deploy does today (`theater-repl services`, then the 10 s check).
 
 Once it exists, a unit whose root copy says `layout = "versioned"` changes
 in three ways:
-- **Where.** Its bundle is installed under `units/<unit>/<n>/`, where `n`
-  is the request's `version`, not over the live files. Each member's name
+- **Where.** Its bundle is installed under `units/<unit>/<env>/<n>/`, where
+  `n` is the request's `version` (counted per unit and env), not over the
+  live files. If staging becomes its own daemon with its own fs root, the
+  path drops back to `units/<unit>/<n>/` there. Each member's name
   is then its path inside that directory (`public/transit.js`), and the
   root copy's prefixes are relative to it. Old and new versions sit side
   by side, and the child's fs grant points at its own version.
