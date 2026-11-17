@@ -34,7 +34,10 @@
   (require store "experiment/field/store.wisp")
 
   (define MAX-REQUEST 20000)
-  (define MAX-BLOB 10485760)      ; 10 MB, the browser's cap for a file (0133)
+  ; 2 MB: a put costs the daemon some 270x its size in memory today (each byte a
+  ; boxed value across the host boundary, 2026-11-17), so 10 MB took server3's
+  ; node to GB; raise it again once wisp fixes that
+  (define MAX-BLOB 2097152)
   (define MIN-FREE 1024)          ; MiB: put-blob refuses with less than 1 GB free
   (define PULL-PAGE 64)
   ; Scopes under this prefix stay on this machine: no request sends them, nor
