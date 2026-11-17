@@ -567,8 +567,10 @@ One call, `pull(name, remote, local, wants)`, dials both and repeats up to
    prefixes (an empty list wants everything): send the event file to the
    local node as `admit <sig> <len>\n<text>`, splitting the file at its
    first LF. Records not wanted are skipped.
-5. If any admit fails, stop with "copy failed" and **do not move the
-   cursor**. The same page is tried again next time.
+5. If the local node doesn't answer an admit (no reply, a short reply),
+   stop with "copy failed" and **do not move the cursor**: the same page is
+   tried again next time. If it answers `err` (a refusal), record the event
+   in `field/peers/<name>.refused` (9.5) and go on with the next record.
 6. Write the new cursor durably.
 7. If more = 1, go again (up to 8 pages), then answer "more" if the remote
    still has more; else "copied".
@@ -577,9 +579,24 @@ Admitting an event the local node already holds is a no-op that succeeds,
 so a crash repeats work and loses nothing, and events stop after one hop:
 when B pulls back from A what A got from B, every admit is a repeat.
 
-Because of step 5, an event the local node refuses (its rules close the
-scope, or a parent was not wanted) stops that direction until the rules or
-WANTS change. Remote events are admitted under the local node's own rules.
+Remote events are admitted under the local node's own rules; one it refuses
+is passed, not waited on (9.5). Before 2026-11-17 a refusal stopped that
+direction until the rules or WANTS changed, so one bad event could stop the
+sync.
+
+### 9.5 Refusals
+
+`field/peers/<name>.refused` holds one line per event the local node refused:
+`<id> <transient|final> <tries> <reason>`. A refusal whose reason says
+`missing parent` or `may not write` is **transient**: the parent, or the
+author's key or a rule, may still be on its way. On each later pull that
+finishes ("idle" or "copied"), the peer asks the remote for each transient
+one again (`get <id>`, 8.4) and admits it: admitted, the line goes; refused
+again, its tries count up, and after 12 it is **final**. Any other reason
+(a bad signature, a hash that doesn't match, a malformed event) is final at
+once. While any line is final the pull's label ends `; refused N
+(field/peers/<name>.refused)`, which field-watch reports. A final line stays
+until someone deletes it; nothing is ever admitted that the node refuses.
 
 ### 9.3 Waking
 
