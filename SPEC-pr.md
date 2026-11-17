@@ -26,7 +26,7 @@ MUST, SHOULD and MAY are as in RFC 2119. Names are SPEC-chat 5.1's. A
 | `title` | one line |
 | `repo` | the repo's name on server3 (`experiment`) |
 | `ref` | the branch: `refs/heads/BRANCH` |
-| `base` | the branch it merges into: `refs/heads/master` |
+| `base` | the branch it merges into: the repo's default branch on server3, its `HEAD` (`refs/heads/master` for experiment, `refs/heads/main` for wisp) |
 | `status` | `open`, `merged` or `closed` |
 | `ticket` | optional: the ticket it does. Merging sets that ticket to `done` |
 
