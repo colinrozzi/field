@@ -26,6 +26,16 @@
 ;   field/peers/<name>.watch   the open watch connection's id, or nothing
 ;   field/peers/<name>.blobs   blobs (sha256 lines) an admitted event links that
 ;                              could not be fetched yet; tried again each pull
+;   field/peers/<name>.refused events the local node refused (0137 follow-up,
+;                              the 11-17 stall): "<id> <transient|final> <tries>
+;                              <reason>" lines. A refusal no longer stops the
+;                              direction: the event is recorded, the cursor moves
+;                              past it, and the label says "refused N" while any
+;                              is final, for field-watch. A transient one (a
+;                              parent or an author key not here yet) is asked for
+;                              again (get) on later pulls, REFUSED-TRIES times,
+;                              then counts as final. Admission is as strict as
+;                              before: nothing is admitted that the node refuses.
 ;
 ; Blobs (SPEC-node 7.1): after admitting an event, the blobs it links (link
 ; blob <sha256> ...) that the local store lacks ("has-blob") are fetched from
@@ -37,6 +47,7 @@
   (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch)
 
   (define PULLS 8)   ; pages per peer-pull call
+  (define REFUSED-TRIES 12)   ; later pulls that ask again for a transient refusal
 
   (define find-byte (lambda (s b i) (string-index s b i)))
   (define b-nl (string-ref "\n" 0))
@@ -201,8 +212,54 @@
         (if (null? all) "none"
           (fs-write (blobs-path name) (join-lines (fetch-blobs remote local all (list)) "")))))))
 
-  ; admit the records of a pull payload p from i -> "" or the error
-  (define admit-records (lambda (local p i wants)
+  ; ── refusals ──────────────────────────────────────────────────────────
+  (define refused-path (lambda (name) (string-append "field/peers/" name ".refused")))
+  (define has-sub (lambda (s pat i)
+    (if (< (string-len s) (+ i (string-len pat))) 0
+      (if (string=? (substring s i (+ i (string-len pat))) pat) 1 (has-sub s pat (+ i 1))))))
+  ; a reason another event or key arriving can cure
+  (define transient? (lambda (why) (if (= (has-sub why "missing parent" 0) 1) 1 (has-sub why "may not write" 0))))
+  ; the node didn't answer at all: not a refusal, so the page is tried again
+  (define transport? (lambda (why) (if (string=? why "admit: no reply") 1 (if (string=? why "admit: short reply") 1 0))))
+  ; why without line breaks, for a one-line record
+  (define one-line (lambda (s i acc)
+    (if (>= i (string-len s)) acc
+      (one-line s (+ i 1) (string-append acc (if (= (string-ref s i) b-nl) " " (substring s i (+ i 1))))))))
+  (define refused-lines (lambda (name) (split-from (match (fs-read-text (refused-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list))))
+  (define refuse (lambda (name id why)
+    (if (= (has-sub (match (fs-read-text (refused-path name)) ((ok t) t) ((err e) "")) id 0) 1) "known"
+      (fs-append (refused-path name)
+        (string-append id (if (= (transient? why) 1) " transient 0 " " final 0 ") (one-line why 0 "") "\n")))))
+  ; final refusals on record
+  (define refused-final (lambda (ls n)
+    (if (null? ls) n
+      (refused-final (cdr ls) (if (= (has-sub (car ls) " final " 64) 1) (+ n 1) n)))))
+  ; ask the remote again for each transient refusal: admitted -> dropped;
+  ; refused again -> one more try, final after REFUSED-TRIES
+  (define retry-one (lambda (remote local l)
+    (let (w (split-from l b-space 0 (list)))
+      (if (or (< (length w) 3) (not (string=? (list-get w 1) "transient"))) l
+        (let (f (peer-request remote (string-append "get " (list-get w 0) "\n")))
+          (let (r (if (= (list-get f 0) 1) (admit-file local (list-get f 1)) "admit: the remote no longer serves it"))
+            (if (string=? r "") ""
+              (let (t (+ (digits-from (list-get w 2) 0 0) 1))
+                (string-append (list-get w 0) (if (< t REFUSED-TRIES) " transient " " final ") (num->str t) " " (one-line r 0 ""))))))))))
+  (define retry-lines (lambda (remote local ls acc)
+    (if (null? ls) acc
+      (let (l (retry-one remote local (car ls)))
+        (retry-lines remote local (cdr ls) (if (string=? l "") acc (string-append acc l "\n")))))))
+  (define retry-refused (lambda (name remote local)
+    (let (ls (refused-lines name))
+      (if (null? ls) "none" (fs-write (refused-path name) (retry-lines remote local ls ""))))))
+  ; the label, with "; refused N" while any refusal is final
+  (define with-refused (lambda (name label)
+    (let (n (refused-final (refused-lines name) 0))
+      (if (= n 0) label (string-append label "; refused " (num->str n) " (" (refused-path name) ")")))))
+
+  ; admit the records of a pull payload p from i -> "" or what stopped it: a
+  ; framing error, or the node not answering. A record the node refuses is
+  ; recorded (refuse) and passed.
+  (define admit-records (lambda (name local p i wants)
     (if (>= i (string-len p)) ""
       (let (j (find-byte p b-nl i))
         (if (< j 0) "bad record"
@@ -212,7 +269,9 @@
                 (if (< (string-len p) end) "short record"
                   (let (r (if (= (wanted? (list-get w 1) wants) 1)
                             (admit-file local (substring p (+ j 1) end)) ""))
-                    (if (string=? r "") (admit-records local p end wants) r)))))))))))
+                    (if (string=? r "") (admit-records name local p end wants)
+                      (if (= (transport? r) 1) r
+                        (begin (refuse name (list-get w 0) r) (admit-records name local p end wants))))))))))))))
   ; the blobs the wanted records of p from i link, added to acc
   (define record-blobs (lambda (p i wants acc)
     (let (j (find-byte p b-nl i))
@@ -233,14 +292,15 @@
             (let (j (find-byte p b-nl 0))
               (let (head (split-from (substring p 0 j) b-space 0 (list)))
                 (let (cursor (list-get head 0))
-                  (if (or (string=? cursor "-") (string=? cursor after)) (begin (settle-blobs name remote local (list)) "idle")
-                    (if (string=? (admit-records local p (+ j 1) wants) "")
+                  (if (or (string=? cursor "-") (string=? cursor after))
+                    (begin (settle-blobs name remote local (list)) (retry-refused name remote local) (with-refused name "idle"))
+                    (if (string=? (admit-records name local p (+ j 1) wants) "")
                       (begin
                         (settle-blobs name remote local (record-blobs p (+ j 1) wants (list)))
                         (fs-write-durable (cursor-path name) cursor)
                         (if (string=? (list-get head 1) "1")
                           (if (< 1 k) (pull-on name remote local wants (- k 1)) "more")
-                          "copied"))
+                          (begin (retry-refused name remote local) (with-refused name "copied"))))
                       "copy failed")))))))))))
 
   ; Open both connections and pull until caught up or PULLS pages -> a label:
