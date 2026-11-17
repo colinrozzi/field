@@ -611,17 +611,29 @@ stops events: the event is admitted, its blob follows when it can.
 
 ### 9.5 Refusals
 
-`field/peers/<name>.refused` holds one line per event the local node refused:
-`<id> <transient|final> <tries> <reason>`. A refusal whose reason says
-`missing parent` or `may not write` is **transient**: the parent, or the
-author's key or a rule, may still be on its way. On each later pull that
-finishes ("idle" or "copied"), the peer asks the remote for each transient
-one again (`get <id>`, 8.4) and admits it: admitted, the line goes; refused
-again, its tries count up, and after 12 it is **final**. Any other reason
-(a bad signature, a hash that doesn't match, a malformed event) is final at
-once. While any line is final the pull's label ends `; refused N
-(field/peers/<name>.refused)`, which field-watch reports. A final line stays
-until someone deletes it; nothing is ever admitted that the node refuses.
+`field/peers/<name>.refused` holds one line per event the local node
+refused: `<id> <transient|final> <tries> <next> <first> <reason>`, the times
+in seconds. A refusal whose reason says `missing parent` or `may not write`
+is **transient**: the parent, or the author's key or a rule, may still be on
+its way, and those can take hours (a deploy, or colin). When a transient
+one's `next` has come, a pull that finishes ("idle" or "copied") asks the
+remote for it again (`get <id>`, 8.4) and admits it: admitted, the line
+goes; refused again, `next` moves out, from a minute doubling to an hour.
+A day after `first` it is **final**. The lines are tried in recorded order,
+which is seen order, so a parent comes back before the children waiting on
+it in the same pass. Any other reason (a bad signature, a hash that doesn't
+match, a malformed event) is final at once.
+
+- While any line is final, the pull's label ends `; refused N
+  (field/peers/<name>.refused)`; field-watch alerts on it.
+- `(peer-retry-refused name)`, in the peer's session, makes every final line
+  transient again, due at once: for after a fix, by hand.
+- At 1000 lines nothing more is recorded: a pull that meets another refusal
+  stops ("copy failed; refused list full") and keeps its cursor, so a flood
+  of bad events can neither fill the disk nor push a real refusal out of
+  sight. Deleting lines (or the file) after reading them lets it go on.
+
+Nothing is ever admitted that the node refuses.
 
 ## 10. The gate
 
