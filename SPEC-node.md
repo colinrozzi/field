@@ -628,10 +628,15 @@ match, a malformed event) is final at once.
   (field/peers/<name>.refused)`; field-watch alerts on it.
 - `(peer-retry-refused name)`, in the peer's session, makes every final line
   transient again, due at once: for after a fix, by hand.
-- At 1000 lines nothing more is recorded: a pull that meets another refusal
-  stops ("copy failed; refused list full") and keeps its cursor, so a flood
-  of bad events can neither fill the disk nor push a real refusal out of
-  sight. Deleting lines (or the file) after reading them lets it go on.
+- At 1000 lines nothing more is listed: a new refusal of either kind is only
+  counted (`field/peers/<name>.refused-more`, and the label's `; refused N
+  more, not listed`, with `; refused list full`), and the pull goes on, so no
+  flood can stop the sync or fill the disk. A listed transient one is still
+  retried. To retry the uncounted ones, clear the list and the count and pull
+  that direction from the start again (cursor file emptied): every admit is
+  idempotent, so it only costs time. (A transient-only stop at the cap was
+  considered, lux; but rules that differ between the nodes refuse with "may
+  not write", which reads as transient, so it would still stop the sync.)
 
 Nothing is ever admitted that the node refuses.
 

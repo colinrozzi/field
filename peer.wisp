@@ -38,9 +38,12 @@
 ;                              an hour, and turns final a day after it was first
 ;                              refused. (peer-retry-refused name) makes the
 ;                              final ones transient again. At REFUSED-MAX lines
-;                              nothing more is recorded: the page stops ("copy
-;                              failed"), so a flood can't fill the disk or hide
-;                              a real refusal. Admission is as strict as before.
+;                              a new refusal is only counted (.refused-more, "N
+;                              more, not listed" in the label) and the pull goes
+;                              on, so no flood can stop the sync or fill the disk;
+;                              to retry those, clear the list and pull from the
+;                              start again (every admit is idempotent). Admission
+;                              is as strict as before.
 ;
 ; Blobs (SPEC-node 7.1): after admitting an event, the blobs it links (link
 ; blob <sha256> ...) that the local store lacks ("has-blob") are fetched from
@@ -246,11 +249,14 @@
   (define known-id? (lambda (ls id)
     (if (null? ls) 0
       (if (and (<= 64 (string-len (car ls))) (string=? (substring (car ls) 0 64) id)) 1 (known-id? (cdr ls) id)))))
-  ; record a refusal -> "known", "recorded", or "full"
+  (define more-path (lambda (name) (string-append "field/peers/" name ".refused-more")))
+  (define more-count (lambda (name) (match (fs-read-text (more-path name)) ((ok t) (digits-from t 0 0)) ((err e) 0))))
+  ; record a refusal -> "known", "recorded", or "counted" (past the cap)
   (define refuse (lambda (name id why)
     (let (ls (refused-lines name))
       (if (= (known-id? ls id) 1) "known"
-        (if (<= REFUSED-MAX (length ls)) "full"
+        (if (<= REFUSED-MAX (length ls))
+          (begin (fs-write (more-path name) (num->str (+ (more-count name) 1))) "counted")
           (let (now (now-s))
             (begin
               (fs-append (refused-path name)
@@ -300,6 +306,7 @@
       (let (n (refused-final ls 0))
         (string-append label
           (if (= n 0) "" (string-append "; refused " (num->str n) " (" (refused-path name) ")"))
+          (if (= (more-count name) 0) "" (string-append "; refused " (num->str (more-count name)) " more, not listed"))
           (if (<= REFUSED-MAX (length ls)) "; refused list full" ""))))))
 
   ; admit the records of a pull payload p from i -> "" or what stopped it: a
@@ -317,7 +324,7 @@
                             (admit-file local (substring p (+ j 1) end)) ""))
                     (if (string=? r "") (admit-records name local p end wants)
                       (if (= (transport? r) 1) r
-                        (if (string=? (refuse name (list-get w 0) r) "full") "refused list full"
+                        (begin (refuse name (list-get w 0) r)
                           (admit-records name local p end wants))))))))))))))
   ; the blobs the wanted records of p from i link, added to acc
   (define record-blobs (lambda (p i wants acc)
