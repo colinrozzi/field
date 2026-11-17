@@ -24,7 +24,9 @@
 ; approvals are signed in colin's browser, with no key this daemon holds.
 ; check.start and check.result in check/<repo> (field/SPEC-git.md 5), signed
 ; by the checker's own key; action.job, action.start and action.result in
-; actions/<repo> (SPEC-actions), signed by the dispatcher's and runner's. pr.approve and pr.decline in pr/approve/<repo>
+; actions/<repo> (SPEC-actions), signed by the dispatcher's and runner's;
+; deploy.request, deploy.done and deploy.refused in deploy/<unit> (SPEC-deploy),
+; signed by the runners' (never deploy/approve/: approvals are an approver's). pr.approve and pr.decline in pr/approve/<repo>
 ; (field/SPEC-pr.md), signed with id.<from> like chat: the rules say whose
 ; keys may approve each repo. system.ask in system/ask/<host> and system.answer
 ; in system/answer/<host> (experiment 0090: a read-only question about a
@@ -62,7 +64,8 @@
     (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
                     "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire" "git.push" "run.propose" "run.result"
                     "check.start" "check.result" "pr.approve" "pr.decline" "system.ask" "system.answer"
-                    "action.job" "action.start" "action.result") string=?)))
+                    "action.job" "action.start" "action.result"
+                    "deploy.request" "deploy.done" "deploy.refused") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
@@ -74,7 +77,8 @@
               (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "check.")) "check/"
                 (if (or (string=? k "pr.approve") (string=? k "pr.decline")) "pr/approve/"
                   (if (string=? k "system.ask") "system/ask/" (if (string=? k "system.answer") "system/answer/"
-                    (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "action.")) "actions/" "")))))))))))))
+                    (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "action.")) "actions/"
+                      (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "deploy.")) "deploy/" ""))))))))))))))
   ; id.* and git.push are signed by this node's own key. The rest by the
   ; key of the body's `from`, id.<from> (field/SPEC-id.md 5), or "" if this
   ; daemon holds none: the chat keys stopped at rules step C.
@@ -150,8 +154,8 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, system.ask, system.answer, action.job, action.start or action.result")
-                  (if (= (in-scope? thread "run/approve/") 1) (reply "err" "run/approve/ takes only events signed in colin's browser")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, system.ask, system.answer, action.job, action.start, action.result, deploy.request, deploy.done or deploy.refused")
+                  (if (or (= (in-scope? thread "run/approve/") 1) (= (in-scope? thread "deploy/approve/") 1)) (reply "err" "run/approve/ and deploy/approve/ take only events signed with an approver key")
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
