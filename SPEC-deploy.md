@@ -137,11 +137,18 @@ A bundle is a tar of the unit's files **at one commit**:
    posts `deploy.request`. A failing check posts nothing and says so in
    the merge's PR.
 3. **An approver approves.**
-   - For transit, chat/docs and mail: the unit's lead or tova.
-   - For private, field rules, and anything under `/etc` or a `bin/`:
-     colin's phone key.
-   - Until (b), a unit that ships `.wisp` to the shared daemon reaches what
-     private reaches. That is the honest note of choice (a).
+   - **While we iterate** (colin, 2026-11-17): tova approves every unit,
+     and the root copy sets `phone_only_prefixes = []`. Ship fast and
+     often.
+   - The phone tier stays in the code as a later option, one line in the
+     root copy each: a unit's approvers set back to colin's phone key, and
+     `phone_only_prefixes` back to its default (`/etc/`, `bin/`, `keys/`,
+     `secrets/`), under which only phone-key approvers may install. The
+     earlier rule that a unit serving HTML or JS on colinrozzi.com is
+     phone-only is retired, and can come back the same way.
+   - Run proposals (commands run as colin, SPEC-run) stay phone-only.
+   - An approval by tova's key can be made by any agent on the desktop
+     (SPEC-id 5). That is the honest note of choice (a).
 4. **The host's runner** follows `deploy/approve/`. For each approval,
    `check_approval` (lux's module) passes only if all of these hold, and
    otherwise the runner posts `deploy.refused` with the first reason, once
