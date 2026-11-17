@@ -75,10 +75,12 @@ mode   = "644"
   `public/`) hold files of several units, so those units list their files
   one by one. One file belongs to exactly one unit: the same file in two
   units, or a file under another unit's prefix, refuses the root copy.
-- Each `prefix` is an absolute directory ending in `/`. A prefix under
-  `/etc/`, `/var/lib/theater-repl/bin/`, `/var/lib/theater-repl/keys/` or
-  `/var/lib/theater-repl/secrets/` is allowed only in a unit whose approvers
-  are all phone keys.
+- Each `prefix` is an absolute directory ending in `/`. A path under one
+  of the root copy's `phone_only_prefixes` is allowed only in a unit whose
+  approvers are all phone keys. When the setting is missing, those are
+  `/etc/`, `/var/lib/theater-repl/bin/`, `/var/lib/theater-repl/keys/` and
+  `/var/lib/theater-repl/secrets/`. While we iterate, tova's root copy sets
+  `phone_only_prefixes = []` (section 5, step 3).
 - `mode` is three octal digits; setuid, setgid and sticky are never set.
 - **It fails closed.** A root copy that breaks any rule above is refused as
   a whole, and nothing is installed until colin fixes it.
