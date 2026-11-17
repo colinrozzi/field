@@ -530,7 +530,13 @@ whole read of one key:
 | `chat/main` (3,850) | 36 s | 2.9 s |
 | everything, ids only (9,800) | 81 s (pull, with files) | 7.4 s |
 
-Ticket 0159 added it.
+`scope-pull <keys|-> <after|-> <kind|->` is the same read with each event's
+file inline, as `pull` gives it: the same head line, then `<id> <scope>
+<kind> <len>\n<file>` records, up to 64 (PULL-PAGE) a page. live.wisp builds
+a fresh snapshot with it (everything: 24 s instead of `pull`'s 54 s on the
+desktop's copy, 2026-11-17), then goes on with `pull` from `at`.
+
+Ticket 0159 added them.
 
 ## 9. Peers: following another node
 
