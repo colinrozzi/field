@@ -472,7 +472,7 @@ A blob it already holds is answered the same, without writing.
 | reason | when |
 |---|---|
 | `put-blob wants <sha256> <len>` | `<len>` is missing or not a number, or the name is not 64 characters |
-| `the blob is too large` | `<len>` is over **10485760** (MAX-BLOB, 10 MB, the browser's cap for a chat file); the node then closes the connection |
+| `the blob is too large` | `<len>` is over **2097152** (MAX-BLOB, 2 MB); the node then closes the connection |
 | `the bytes don't hash to the name` | sha256 of the bytes is not `<sha256>` |
 | `too little disk free` | the disk the daemon runs from has under **1024 MiB** free (MIN-FREE), as `df -B1048576 --output=avail .` says, or df can't say |
 
@@ -480,9 +480,12 @@ Anyone who can reach the node can put a blob: on loopback any local
 process, through a gate (section 10) any node in `gate-keys`. What they can
 do with it is limited to disk, which the cap and MIN-FREE bound; a blob can
 only ever hold what its name says. The bytes are buffered in
-`field/conn/<cid>` as they arrive, rewritten on each piece, so a 10 MB put
-costs some hundreds of MB of writes on the node; fine for screenshots and
-logs, not for bulk.
+`field/conn/<cid>` as they arrive, rewritten on each piece, so a 2 MB put
+costs tens of MB of writes on the node; fine for screenshots and logs, not
+for bulk. MAX-BLOB was 10 MB until 2026-11-17, when a put was found to cost
+the daemon some 270x its size in memory (each byte a boxed value across the
+host boundary): 10 MB would take server3's node to several GB. It goes back
+up once wisp fixes that.
 
 ## 9. Peers: following another node
 
