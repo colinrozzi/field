@@ -39,3 +39,11 @@
 (peer-watch IN GATE)
 (peer-watch OUT LOCAL)
 (set-interval "follow" 60000)
+; A receive that hears nothing for 2 minutes gives up (wisp #139), so a
+; half-open connection can't hold this session (it held it 5 h on 2026-11-17):
+; the pull says it failed and the next tick tries again from the cursor. Only
+; on a daemon that has the verb (its tcp help names it).
+(define has-text (lambda (s p i)
+  (if (< (string-len s) (+ i (string-len p))) 0
+    (if (string=? (substring s i (+ i (string-len p))) p) 1 (has-text s p (+ i 1))))))
+(if (= (has-text (help "tcp") "tcp-set-read-timeout" 0) 1) (tcp-set-read-timeout 120000) "no read timeout on this daemon")

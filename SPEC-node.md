@@ -594,6 +594,13 @@ pulls the desktop into server3. Both WANTS lists are empty. While a pull
 answers "more" it pulls again every 50 ms. A 60 s tick pulls both ways and
 reopens any watch that has closed.
 
+A peer's session also bounds every receive (`tcp-set-read-timeout`, wisp
+#139; 2 minutes on the desktop). Without it, a connection reset that never
+reached the desktop held its peer in one receive for 5 hours (2026-11-17)
+and stopped the sync both ways. With it, such a request fails ("no reply"),
+the pull answers "pull failed" or "copy failed" and keeps its cursor, and
+the next tick dials again.
+
 ### 9.4 Blobs
 
 After step 6 of a page (9.2), the peer looks at the link lines of every
