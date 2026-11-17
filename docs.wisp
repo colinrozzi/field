@@ -71,13 +71,16 @@
 
   ; read doc/'s doc.ops from the cursor to the store's head, a page at a time,
   ; from the store's scope index (0159): a fresh start no longer walks the
-  ; whole seen chain (minutes on the desktop's 9,500 events)
+  ; whole seen chain (minutes on the desktop's 9,500 events) -> "caught up",
+  ; or "store" when the store couldn't be read (down, or one without scope):
+  ; then the models may be behind, and nothing is answered from them
   (define docs-catch-up (lambda ()
     (let (r (field-scope-after (store) (vector-ref STATE 0) "doc/" "doc.ops"))
-      (begin
-        (map (lambda (en) (take-event (list-get en 1))) (list-get r 1))
-        (vector-set! STATE 0 (list-get r 0))
-        (if (= (list-get r 2) 1) (docs-catch-up) "caught up")))))
+      (if (= (list-get r 2) -1) "store"
+        (begin
+          (map (lambda (en) (take-event (list-get en 1))) (list-get r 1))
+          (vector-set! STATE 0 (list-get r 0))
+          (if (= (list-get r 2) 1) (docs-catch-up) "caught up"))))))
 
   (define docs-read (lambda (d) (begin (docs-catch-up) (text-string (model-of d)))))
 
@@ -111,13 +114,18 @@
           (if (< j 0) (list (substring p 0 i) (rest-of p (+ i 1)) "")
             (list (substring p 0 i) (substring p (+ i 1) j) (rest-of p (+ j 1)))))))))
 
+  ; Every request catches up first; one the store can't be read for is
+  ; refused, so a write is never diffed against a model that is behind (on
+  ; 2026-11-17 node-docs restarted on this code before its node had scope,
+  ; and its models were empty for 12 minutes).
   (define handle (lambda (verb p)
     (let (f (fields3 p))
       (if (not (name-ok? (list-get f 0))) (reply "err" "bad document name")
+      (if (string=? (docs-catch-up) "store") (reply "err" "the store can't be read now (down, or without the scope verb): try again")
         (if (string=? verb "read") (reply "ok" (docs-read (list-get f 0)))
           (if (string=? (list-get f 1) "") (reply "err" (string-append verb " wants <D>\\n<from>\\n..."))
             (if (string=? verb "apply") (post-ops (list-get f 0) (list-get f 1) (list-get f 2))
-              (do-write (list-get f 0) (list-get f 1) (list-get f 2)))))))))
+              (do-write (list-get f 0) (list-get f 1) (list-get f 2))))))))))
 
   (define verb-of (lambda (buf)
     (let (i (string-index buf b-space 0))

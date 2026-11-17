@@ -12,7 +12,9 @@
 ;       -> (list cursor entries more), entries (seq id scope kind), from the
 ;          store's scope index (SPEC-node 8.11, 0159): keys a scope, a prefix
 ;          ending in /, or several joined by commas; no walk of the seen chain.
-;          The cursor is the index's, not a seen event's.
+;          The cursor is the index's, not a seen event's. A store that can't
+;          answer (unreachable, or from before 0159) gives more -1, not 0:
+;          nothing was read, which is not the same as nothing to read.
 ;
 ; Events are built and signed here, by key name, so the store never holds an
 ; author's key: it only checks signatures. Each call opens a connection, so a
@@ -119,7 +121,7 @@
 
   (define field-scope-after (lambda (addr cursor keys kind)
     (let (r (ask addr (cat (list "scope " (dash keys) " " (dash cursor) " " (dash kind) "\n"))))
-      (if (= (list-get r 0) 0) (list cursor (list) 0)
+      (if (= (list-get r 0) 0) (list cursor (list) -1)
         (let (ls (lines (list-get r 1)))
           (let (head (words (list-get ls 0)))
             (list (if (string=? (list-get head 0) "-") "" (list-get head 0))
