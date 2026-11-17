@@ -99,12 +99,14 @@ R4, R6):
 2. **The secrets list comes from the workflow as it is on master** at that
    commit, never from a branch or a PR. Which workflow may read which
    secret is a grant colin makes in the secrets store
-   (`workflow:<repo>/<name>`), not the workflow file's own claim.
+   (`wf-<repo>-<name>`, e.g. `wf-experiment-deploy`: the secrets helper
+   takes only a-z, 0-9 and -, as repo and workflow names already are), not
+   the workflow file's own claim.
 3. **Logs.** A job that got secrets keeps its full log on the host, and only
    the masked log goes in the blob, since a blob reaches every store that
    holds the scope.
 4. Each secret fetch posts `secret.read` with reader
-   `workflow:<repo>/<name>` and the job id.
+   `wf-<repo>-<name>` and the job id.
 
 Later, for option (b): the runner runs from a root-owned copy, as
 `lib/runner` does, so that an edit to it in the shared checkout doesn't take
