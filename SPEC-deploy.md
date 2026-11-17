@@ -90,7 +90,7 @@ A bundle is a tar of the unit's files **at one commit**:
 
 | kind | scope | author | headers (then text) |
 |---|---|---|---|
-| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `rollback <old version>` (only for a rollback); text: the installed paths that change, a line each |
+| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `rollback <old version>` (only for a rollback); text: the installed paths that change, a line each |
 | `deploy.approve` | `deploy/approve/<unit>` | one of the unit's approver keys | `from`, `request <id>`, `unit`, `env`, `commit`, `bundle`, `expires` |
 | `deploy.decline` | `deploy/approve/<unit>` | an approver key | `from`, `request <id>`; text: why |
 | `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
