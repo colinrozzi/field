@@ -60,6 +60,11 @@ when needed, from the repo on server3.
 - `head` is the exact commit approved. The approval holds only while it is
   the PR's head: after another push the PR shows "approved at <head>,
   now at <newer>", and needs a new approval.
+- **A review belongs to the PR's number and ref together**: only events
+  whose `pr` and `ref` both match it count. Two branches can take the same
+  number when one is made on the page as `pr-new` makes another (each picks
+  one past the highest); they then keep separate reviews, and `lib/pr`
+  refuses that number until one is renumbered (lux, theo).
 - **A review is per reviewer** (tova, 2026-11-17). Each approver key's
   newest `pr.approve` or `pr.decline` for the PR (by `time`, then id) is
   that reviewer's state: *approved* if its `head` is the PR's head, *stale*
