@@ -27,7 +27,8 @@ the job passes, the runner:
 - adds `artifact <name> <sha256> <size>` lines to action.result.
 
 Names are the file's basename, `[A-Za-z0-9._-]{1,128}`, unique within a
-job, and each artifact is at most 100 MB.
+job, never `APPROVAL` or `latest` and never ending in `.new` (the updater
+writes those itself), and each artifact is at most 100 MB.
 
 So that the build can be compared, a repo SHOULD build its artifacts from a
 pinned flake package that any other builder (GitHub's Actions, another
@@ -56,6 +57,8 @@ Rules: `release/ id`; `release/approve/ none`; `release/approve/<repo> <approver
 
 Anyone holding the key can at worst fill the store up to its quota.
 
+The `releases` user owns only `sha256/`, where release-put also keeps its temp files. `releases/` and everything below it are root's (755). The updater writes there as root and refuses unless each directory it writes is one only root can write. Otherwise that user could swap in a link between root's mkdir and open (lux).
+
 Caddy serves the store as static files. Wisp never serves these files.
 - `/dl/<sha256>`: immutable.
 - `/releases/<repo>/<tag>/<name>` and `/releases/<repo>/<tag>/APPROVAL`: the approval event file, as the node holds it.
@@ -74,7 +77,9 @@ Only the root-owned updater on server3 (`lib/release-updater`, deploy_trust's pa
 6. where the root copy names a GitHub repo, the GitHub release of the same tag has the same sha256 for every artifact;
 7. the commit contains the current latest's commit (latest never moves backward), unless the approval says `rollback yes`.
 
-It then writes `releases/<repo>/<tag>/` (links into the store, plus APPROVAL) and swaps `latest` to it in one rename. A failed check moves nothing and is logged. `--dry-run` prints what it would do.
+It then writes `releases/<repo>/<tag>/` (links into the store, plus APPROVAL, opened with O_EXCL and O_NOFOLLOW) and swaps `latest` to it in one rename.
+
+An existing tag folder is reused only if its links and its APPROVAL's manifest are this approval's; otherwise the approval is refused. A failed check moves nothing and is logged. `--dry-run` prints what it would do.
 
 ## 6. Install
 
