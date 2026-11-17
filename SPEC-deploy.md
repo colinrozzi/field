@@ -58,6 +58,12 @@ mode   = "644"
 - `approvers` are Ed25519 public keys, 64 lowercase hex. For a phone-tier
   unit (private, field rules, anything under `/etc` or a `bin/`) they are
   only colin's phone keys (SPEC-run 3).
+- A path entry has either `prefix`, a directory ending in `/` (all files
+  below it), or `file`, one exact file (`file =
+  "/var/lib/theater-repl/fs/private.wisp"`). Shared directories (`fs/`,
+  `public/`) hold files of several units, so those units list their files
+  one by one. One file belongs to exactly one unit: the same file in two
+  units, or a file under another unit's prefix, refuses the root copy.
 - Each `prefix` is an absolute directory ending in `/`. A prefix under
   `/etc/`, `/var/lib/theater-repl/bin/`, `/var/lib/theater-repl/keys/` or
   `/var/lib/theater-repl/secrets/` is allowed only in a unit whose approvers
