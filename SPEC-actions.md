@@ -47,16 +47,37 @@ All in scope `actions/<repo>`. Rules: `actions/ id`.
 |---|---|---|
 | `action.job` | none | `from`, `repo`, `commit <40 hex>`, `ref`, `old <40 hex>`, `workflow`, `trigger`, `runs-on` |
 | `action.start` | its job | `from`, `job <job id>`, `repo`, `commit`, `ref`, `workflow`, `steps <names, space-separated, or ->` |
-| `action.result` | its start (or its job if it never started) | `from`, `job`, `repo`, `commit`, `ref`, `workflow`, `status pass\|fail\|error`, a blank line, then one line per step: `<name> pass\|fail\|timeout\|skip <seconds>s`, or `error: <why>` |
+| `action.result` | its start (or its job if it never started) | `from`, `job`, `repo`, `commit`, `ref`, `workflow`, `status pass\|fail\|error`, a blank line, then one line per step: `<name> pass\|fail\|timeout\|skip <seconds>s`, or `error: <why>`; then the logs: `log <step> <sha256> <bytes>` per step (`log - ...` for the whole job's tail; `log <step> - 0` for one over the job's cap) |
+| `action.rerun` | none | `from`, `repo`, `commit <40 hex>`, optional `workflow`: a request to run that commit's push workflows (or the one named) again |
 
 - **Dispatch.** The dispatcher posts one `action.job` per (repo, workflow,
   commit), never twice. A commit pushed under a second ref gets no second
   job.
-- **Run.** A runner takes only jobs whose `runs-on` is its host, and whose
-  `from` is the dispatcher's identity. It runs each job once, and records
-  that before running it.
-- **Logs.** A result links the job's log as a blob: `link blob <sha256>
-  <size> text/plain`, the last 256 KB (SPEC-node 7.1).
+- **Run.** A runner takes only jobs whose `runs-on` is its host, whose
+  `from` is the dispatcher's identity, and whose **author key** is a current
+  key of that identity (SPEC-id). Rules give `actions/` to every identity, so
+  the `from` header alone proves nothing: without the key check, anyone could
+  post a job for a merge, tag or deploy workflow at any commit. It runs each
+  job once, and records that before running it.
+- **Logs.** Each step's own output is a blob of its own: its last 8 KB when
+  it passed, 64 KB when it failed or timed out, and at most 512 KB for all of
+  a job's steps. The whole job's tail (64 KB) is one more, for errors outside
+  a step. The result links each (`link blob <sha256> <size> text/plain`,
+  SPEC-node 7.1) and names it on a `log` line, so a log is bound to its job
+  and step by the runner's signed event, and a step cannot pass off its
+  output as another's by printing markers. Before upload the runner removes
+  ANSI and other control sequences, keeps a line's last carriage-return
+  rewrite, and makes it valid UTF-8. A page MUST still treat a log as
+  untrusted text: escape it, render no escape sequence, and make no link of
+  a URL in it. **Logs are visible to everyone with the login**, and to
+  every store that holds the scope; once jobs get secrets, the runner masks
+  each secret's value before upload (5.3).
+- **Rerun.** `action.rerun` is a request, not a job: the runner counts it
+  only from its rerun identities (colin and tova), by a current key of the
+  one its `from` names, and turns it into the same jobs as `--rerun`, each
+  with the request as its parent and trigger `rerun`: **push workflows only**
+  (never a merge, tag or deploy workflow, even one named), at a commit its
+  mirror holds, at most one per (commit, workflow) a minute.
 - **Status.** `pass` when the syntax pass and every step passed. `fail` when
   one failed or timed out. `error` when the job could not run: the checkout
   failed, the workflow was gone or invalid, it lists secrets, or it hit
@@ -71,6 +92,10 @@ All in scope `actions/<repo>`. Rules: `actions/ id`.
 - A job with no start is queued. A start with no result is running.
 - The newest result for a (workflow, commit) is that workflow's status for
   the commit.
+- Count a result (and a `check.result`) only when its author is a current
+  key of `actions` or `checks` (SPEC-id): anyone may write in these scopes,
+  so a result signed by any other key is a forgery to ignore. lib/pr,
+  deploy-request and the PR and commit pages all do.
 
 ## 4. Who writes it, and the environment of a step
 

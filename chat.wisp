@@ -24,7 +24,9 @@
 ; approvals are signed in colin's browser, with no key this daemon holds.
 ; check.start and check.result in check/<repo> (field/SPEC-git.md 5), signed
 ; by the checker's own key; action.job, action.start and action.result in
-; actions/<repo> (SPEC-actions), signed by the dispatcher's and runner's;
+; actions/<repo> (SPEC-actions), signed by the dispatcher's and runner's, and
+; action.rerun there, a request to run a commit's push workflows again,
+; signed with id.<from> like chat (the runner counts only colin's and tova's);
 ; deploy.request, deploy.done and deploy.refused in deploy/<unit> (SPEC-deploy),
 ; signed by the runners' (never deploy/approve/: approvals are an approver's);
 ; release.request in release/<repo> (SPEC-release), signed by the runner's
@@ -66,7 +68,7 @@
     (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
                     "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire" "git.push" "run.propose" "run.result"
                     "check.start" "check.result" "pr.approve" "pr.decline" "pr.dismiss" "system.ask" "system.answer"
-                    "action.job" "action.start" "action.result"
+                    "action.job" "action.start" "action.result" "action.rerun"
                     "deploy.request" "deploy.done" "deploy.refused" "release.request") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
@@ -157,7 +159,7 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, deploy.request, deploy.done, deploy.refused or release.request")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused or release.request")
                   (if (or (= (in-scope? thread "run/approve/") 1) (or (= (in-scope? thread "deploy/approve/") 1) (= (in-scope? thread "release/approve/") 1))) (reply "err" "run/approve/, deploy/approve/ and release/approve/ take only events signed with an approver key")
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
