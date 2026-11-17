@@ -25,6 +25,10 @@
 ;                                         (store.wisp, 0159), not the seen chain;
 ;                                         at: when more is 0, the seen event the
 ;                                         read ends at, to go on with pull
+;   scope-pull <keys|-> <after|-> <kind|->  -> the same head, then records as
+;                                         pull's ("<id> <scope> <kind> <len>\n"
+;                                         and the file), up to PULL-PAGE: a
+;                                         snapshot of a few scopes (live.wisp)
 ;   put-blob <sha256> <len>\n<bytes>   -> the sha256, once the blob is kept: only
 ;                                         bytes that hash to the name, at most
 ;                                         MAX-BLOB, while the disk has MIN-FREE
@@ -116,6 +120,24 @@
         (let (f (field-scope keys (dash (list-get w 2)) (if (< (length w) 4) "" (dash (list-get w 3))) SCOPE-PAGE))
         (ok-reply (string-append (orz (list-get f 0)) " " (num->str (list-get f 2)) " " (orz (list-get f 3)) "\n"
                                  (scope-lines (list-get f 1) "")))))))))
+  (define do-scope-pull (lambda (w)
+    (if (< (length w) 3) (err-reply "scope-pull wants <prefix> <after> <kind>")
+      (let (keys (if (string=? (list-get w 1) "-") (list "") (split-from (list-get w 1) b-comma 0 (list))))
+       (if (or (null? keys) (< 8 (length keys))) (err-reply "scope-pull takes 1 to 8 keys")
+        (let (f (field-scope keys (dash (list-get w 2)) (if (< (length w) 4) "" (dash (list-get w 3))) PULL-PAGE))
+          (ok-reply (string-append (orz (list-get f 0)) " " (num->str (list-get f 2)) " " (orz (list-get f 3)) "\n"
+                                   (scope-records (list-get f 1) "")))))))))
+  ; scope entries (seq id scope kind) as pull records, leaving out private/ and
+  ; any event this store can't read back
+  (define scope-records (lambda (es out)
+    (if (null? es) out
+      (let (e (car es))
+        (scope-records (cdr es)
+          (if (has-prefix (list-get e 2) PRIVATE) out
+            (let (f (field-file (list-get e 1)))
+              (if (string=? f "") out
+                (string-append out (list-get e 1) " " (list-get e 2) " " (list-get e 3) " "
+                               (num->str (string-len f)) "\n" f)))))))))
   (define scope-lines (lambda (es out)
     (if (null? es) out
       (let (e (car es))
@@ -223,6 +245,7 @@
                       (if (string=? verb "head") (ok-reply (field-seen-head))
                         (if (string=? verb "follow") (do-follow w)
                         (if (string=? verb "scope") (do-scope w)
+                        (if (string=? verb "scope-pull") (do-scope-pull w)
                         (if (string=? verb "pull") (do-pull w)
                           (if (string=? verb "get") (do-get w)
                           (if (string=? verb "blob")
@@ -233,7 +256,7 @@
                             (if (string=? verb "watch")
                               (begin (fs-append WATCHERS (string-append cid "\n"))
                                      (ok-reply (field-seen-head)))
-                              (err-reply "unknown request"))))))))))
+                              (err-reply "unknown request")))))))))))
                     (drain store cid (rest)))))))))))))
 
   (define field-connection (lambda (cid)
