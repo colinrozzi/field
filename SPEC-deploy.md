@@ -32,6 +32,7 @@ files = [                      # repo path -> installed path
 services = []                  # services to restart after installing
 checks = ["site/check-chat --quick"]   # run on the desktop before asking for approval
 envs = ["prod"]                # and "staging" once it exists
+after = []                     # units a merge must deploy first (below)
 ```
 
 `<unit>` is a name (SPEC-chat 5.1). Together, the units' files replace
@@ -39,6 +40,15 @@ today's MANIFEST in `site/server3/deploy`. A file belongs to at most one
 unit: the deploy workflow refuses a repo where two units claim one
 installed path. `checks` run in a checkout of the commit on the desktop
 runner, as the deploy workflow's steps.
+
+**Order between units.** Units deploy independently, so a merge that
+changes two of them posts two requests that nothing orders. Prefer changes
+that work in either order (a new file that old code ignores, code that
+works without it). Where that isn't possible, `after` names the units that
+must be installed first when the same merge changes them too (e.g. private
+`after = ["pages"]`, since private.wisp loads pages' page.js). `after` only
+orders requests and widens nothing, so the repo's file is trusted for it.
+It is inactive until the units are.
 
 **The root copy: `/etc/field-deploy/units.toml` on the host,** owned by
 root, mode 644, and installed or changed only by a step colin runs (`lib/run
@@ -90,7 +100,7 @@ A bundle is a tar of the unit's files **at one commit**:
 
 | kind | scope | author | headers (then text) |
 |---|---|---|---|
-| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `rollback <old version>` (only for a rollback); text: the installed paths that change, a line each |
+| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `after <units, space-separated, or ->`, `rollback <old version>` (only for a rollback); text: the installed paths that change, a line each |
 | `deploy.approve` | `deploy/approve/<unit>` | one of the unit's approver keys | `from`, `request <id>`, `unit`, `env`, `commit`, `bundle`, `expires` |
 | `deploy.decline` | `deploy/approve/<unit>` | an approver key | `from`, `request <id>`; text: why |
 | `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
@@ -148,6 +158,18 @@ A bundle is a tar of the unit's files **at one commit**:
    7. the request was never installed: the runner writes the request id to
       its ledger **before** installing, so a crash never installs it twice,
       and a `deploy.done` for it in the field also counts.
+   8. for each unit A in the request's `after`, with a `deploy.request` for
+      the same env and the same commit: that request has a `deploy.done`. If
+      it is still open or approved and not yet installed, the runner
+      **waits** and checks again, without refusing. If it was refused or
+      declined, it posts `deploy.refused` with "after A failed". A unit in
+      `after` with no request at that commit (the merge didn't change it) is
+      no constraint. Waiting stops at the request's own `expires`, when the
+      runner posts `deploy.refused` with "after A not done before expiry",
+      so nothing waits forever and the approver sees why. A request whose
+      `after` chain, through the same merge's requests, comes back to its own
+      unit is refused at once with "after cycle"; the deploy workflow also
+      refuses such a cycle before it posts any request (lux).
 
    Then `install_bundle` checks **every member before writing any**, so a
    bundle installs whole or not at all:
