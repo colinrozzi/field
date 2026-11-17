@@ -163,6 +163,15 @@ A bundle is a tar of the unit's files **at one commit**:
      nothing in the live unit can answer approve.colinrozzi.com; while that
      origin was served through live.wisp, the live unit could change it too
      (lux, 2026-11-17).
+     The honest limit: that keeps a careless or tova-approved live change
+     off the approve page, but is not yet a wall. Any service in the daemon
+     can listen on 127.0.0.1:8084, so one that starts first could answer
+     the origin (approve is listed first in config.toml, so a squatter must
+     race a running service, and approve fails loudly); and config.toml,
+     which names approve's start file, is the tova-tier config unit. The
+     wall is the supervisor narrowing each child's tcp-listen to its own
+     port with config on the phone (0130), or approve in its own daemon
+     under its own user.
    - When 0130 removes agents' root on server3, approve and config
      must move to the phone tier in the same step, or 0130 closes nothing.
    - **Auto-approval** (beck): for a unit whose `deploy/<unit>.toml` says
