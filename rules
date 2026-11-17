@@ -27,3 +27,7 @@ pr/approve/experiment d6b0fe7397ee3eed956fefd337e856169c90b02ade9dc34ad6a1bdf18b
 system/ask/ id
 system/answer/ id
 actions/ id
+deploy/ id
+deploy/approve/ none
+deploy/approve/transit 1908c021edbb19d46c8474cac5cd50731a097a822628c26345491b70ec514082
+deploy/approve/transit d6b0fe7397ee3eed956fefd337e856169c90b02ade9dc34ad6a1bdf18bccc23c
