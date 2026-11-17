@@ -83,12 +83,16 @@
   (define signer (lambda (from)
     (match (key-public (string-append "id." from)) ((ok p) (string-append "id." from)) ((err e) ""))))
 
+  ; Catch up first, so the parents are the heads the store has, and every
+  ; event the ops name is one of their ancestors (SPEC-text 3). A burst that
+  ; is invalid against D's text is refused rather than posted and ignored.
   (define post-ops (lambda (d from ops)
-    (let (body (string-append "from " from "\n\n" ops))
+    (let (body (begin (docs-catch-up) (string-append "from " from "\n\n" ops)))
       (if (string=? (signer from) "") (reply "err" (string-append "no key for from " from " on this daemon (lib/chat ME id-new NAME)"))
         (if (< MAX-BODY (string-len body)) (reply "err" "burst over 16384 bytes")
+        (if (= (text-valid? (model-of d) body) 0) (reply "err" "invalid burst: a malformed line, or a reference to text this document doesn't have (SPEC-text 3)")
           (let (r (field-post-to (store) (signer from) (string-append "doc/" d) "doc.ops" body (tips-of d) (list)))
-            (if (= (string-len r) 64) (begin (docs-catch-up) (reply "ok" r)) (reply "err" r))))))))
+            (if (= (string-len r) 64) (begin (docs-catch-up) (reply "ok" r)) (reply "err" r)))))))))
 
   ; TODO: a diff over 16 KB goes as several bursts, each made on the last.
   (define do-write (lambda (d from text)
