@@ -164,7 +164,12 @@ A bundle is a tar of the unit's files **at one commit**:
       **waits** and checks again, without refusing. If it was refused or
       declined, it posts `deploy.refused` with "after A failed". A unit in
       `after` with no request at that commit (the merge didn't change it) is
-      no constraint.
+      no constraint. Waiting stops at the request's own `expires`, when the
+      runner posts `deploy.refused` with "after A not done before expiry",
+      so nothing waits forever and the approver sees why. A request whose
+      `after` chain, through the same merge's requests, comes back to its own
+      unit is refused at once with "after cycle"; the deploy workflow also
+      refuses such a cycle before it posts any request (lux).
 
    Then `install_bundle` checks **every member before writing any**, so a
    bundle installs whole or not at all:
