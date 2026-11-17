@@ -198,10 +198,29 @@ user (R8).
 
 ## 8. Services and the supervisor
 
-Until ilse's root supervisor (0156) exists, the runner restarts a service
-the way deploy does today, through the daemon (`theater-repl services`).
-Once it exists, the runner asks the supervisor, and the root copy's
-`services` become supervisor children.
+Until ilse's root supervisor (0156, doc `root-supervisor`) exists, the
+runner installs in place and restarts a service through the daemon, as
+deploy does today (`theater-repl services`, then the 10 s check).
+
+Once it exists, a unit whose root copy says `layout = "versioned"` changes
+in three ways:
+- **Where.** Its bundle is installed under `units/<unit>/<n>/`, where `n`
+  is the request's `version`, not over the live files. Each member's name
+  is then its path inside that directory (`public/transit.js`), and the
+  root copy's prefixes are relative to it. Old and new versions sit side
+  by side, and the child's fs grant points at its own version.
+- **Restart.** The runner does not restart anything itself. After
+  installing, it sends the supervisor `deploy <unit> <n>` and waits for the
+  answer: started, healthy, and still up after the settle time, or
+  `failed <step> <why>`.
+- **Done.** It posts `deploy.done` from a success, and `deploy.refused`
+  with the supervisor's step and reason from a failure. In that case the
+  supervisor has already left version n-1 serving.
+
+A rollback to version V is then `deploy <unit> V` of a bundle still on
+disk. The request and approval stay as in section 6, so a rollback is still
+one signed tap. In-place units (anything not run by a supervised child, such
+as `/etc` files) keep the in-place install.
 
 ## 8a. Pages
 
