@@ -316,6 +316,31 @@ back to V" would stop meaning the bundle that was approved. The request and appr
 one signed tap. In-place units (anything not run by a supervised child, such
 as `/etc` files) keep the in-place install.
 
+## 8b. Field-served units
+
+A unit whose root copy says `layout = "field"` (ticket 0064, doc
+`site-from-field`) is served from the field, not from files on the host:
+- **Its paths.** Each is `file = "public/<path>"`: where web.wisp serves
+  it, not a path on the host, and no owner or mode. Two field units never
+  serve one path. The repo's `deploy/<unit>.toml` says `layout = "field"`
+  too, so deploy-request takes `public/...` as its installed paths; the
+  root copy decides.
+- **Install.** The runner checks the bundle as a versioned one's (the
+  approved sha256, regular files, normalized relative paths, each once,
+  each the unit's) and each file at most 512 KB, then puts each file into
+  its node as a blob (`put-blob`, SPEC-node 8.10). It writes nothing on the
+  host and restarts nothing.
+- **Done.** `deploy.done` is as for any unit, `<sha256> <path>` per file,
+  with one more header, `layout field`. That event is the switch: web.wisp
+  serves each path from the blob named by the newest `layout field`
+  `deploy.done` of its unit (by `version`), and only from a `deploy.done`
+  whose author is a current key of the host's runner identity
+  (`runner.server3`). A newer `deploy.done` without `layout field` takes the
+  unit's paths back to the host's files.
+- **Rollback** is a rollback request as in 6: its files are already blobs,
+  so the runner puts nothing new, and its `deploy.done` makes the older
+  version the served one.
+
 ## 8a. Pages
 
 `/personal/deploys` lists the units, each with its versions (commit,
