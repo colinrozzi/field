@@ -33,6 +33,7 @@ services = []                  # services to restart after installing
 checks = ["site/check-chat --quick"]   # run on the desktop before asking for approval
 envs = ["prod"]                # and "staging" once it exists
 after = []                     # units a merge must deploy first (below)
+auto = false                   # approve itself on a green merge (below)
 ```
 
 `<unit>` is a name (SPEC-chat 5.1). Together, the units' files replace
@@ -147,6 +148,16 @@ A bundle is a tar of the unit's files **at one commit**:
      earlier rule that a unit serving HTML or JS on colinrozzi.com is
      phone-only is retired, and can come back the same way.
    - Run proposals (commands run as colin, SPEC-run) stay phone-only.
+   - **Auto-approval** (beck): for a unit whose `deploy/<unit>.toml` says
+     `auto = true`, the deploy workflow waits, after posting the request,
+     for the merge commit's newest `check.result` signed by a current key of
+     the `actions` or `checks` identity (as SPEC-pr 3 counts checks). On
+     `pass` it signs the `deploy.approve` itself, as `runner.desktop`. On
+     `fail`, `error` or no result in time, it approves nothing and a person
+     must. It counts only where `runner.desktop`'s key is among the unit's
+     approvers in the root copy and in its `deploy/approve/<unit>` rules
+     line, so turning it on is those two lines plus `auto = true`. No unit
+     has it yet.
    - An approval by tova's key can be made by any agent on the desktop
      (SPEC-id 5). That is the honest note of choice (a).
 4. **The host's runner** follows `deploy/approve/`. For each approval,
