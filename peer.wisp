@@ -17,6 +17,11 @@
 ; TLS checked against <server name>, then the gate's challenge signed with this
 ; daemon's key <key>. Either way the result is a connection to a store.
 ;
+; Deadlines: the session that runs this sets (tcp-set-read-timeout ms) (wisp
+; #139; desktop/serve-peer.wisp, 2 minutes), so a request whose answer never
+; comes (a half-open connection) gives up as "no reply" instead of holding the
+; session; the pull fails, and the next tick tries again from the cursor.
+;
 ; Woken, not polled: (peer-watch name remote) keeps a connection open on which
 ; the remote store says "new head" each time it sees an event, and the session
 ; steps on each one (on-data). A slow tick steps too, and re-opens the watch

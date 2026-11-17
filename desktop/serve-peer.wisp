@@ -39,3 +39,8 @@
 (peer-watch IN GATE)
 (peer-watch OUT LOCAL)
 (set-interval "follow" 60000)
+; A receive that hears nothing for 2 minutes gives up (wisp #139), so a
+; half-open connection can't hold this session (it held it 5 h on 2026-11-17):
+; the pull says it failed and the next tick tries again from the cursor. Last,
+; since a daemon without the verb stops here.
+(tcp-set-read-timeout 120000)
