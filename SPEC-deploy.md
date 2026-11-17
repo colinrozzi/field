@@ -109,7 +109,7 @@ A bundle is a tar of the unit's files **at one commit**:
 
 | kind | scope | author | headers (then text) |
 |---|---|---|---|
-| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `after <units, space-separated, or ->`, `rollback <old version>` (only for a rollback); text: the installed paths that change, a line each |
+| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `after <units, space-separated, or ->`, `rollback <old version>` (only for a rollback), `installed <version> <commit or ->`, `age newer\|rollback`; text: the installed paths that change, a line each |
 | `deploy.approve` | `deploy/approve/<unit>` | one of the unit's approver keys | `from`, `request <id>`, `unit`, `env`, `commit`, `bundle`, `expires` |
 | `deploy.decline` | `deploy/approve/<unit>` | an approver key | `from`, `request <id>`; text: why |
 | `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
@@ -121,6 +121,21 @@ A bundle is a tar of the unit's files **at one commit**:
   of the unit's `deploy.done` events for that env (1 for the first): it
   names a deploy for people and for rollback, and the bundle sha256 is what
   binds.
+- **`installed` and `age`** (lux, tova, 2026-11-17): what that env had
+  installed when the request was made (the newest `deploy.done`'s version
+  and commit; `0 -` for nothing), and how the request compares: `newer`
+  (its commit has something the installed one lacks), or `rollback`. The
+  workflow posts nothing else: a commit that is the installed one or an
+  ancestor of it, or one git can't place (unknown counts as older), asks
+  for nothing, and going back is a rollback (section 6). A reader that
+  can't compare by git, the approval page on colin's phone, shows these
+  two as text and warns unless `age` is `newer` or `rollback`; a reader
+  that can (the deploys page, by the code browser's `range`; `deploy-request
+  --approve`, by `git merge-base --is-ancestor`) also says when a request is
+  older than what is installed, and asks for `--downgrade` before signing
+  one. They are the runner's signed claims, so they guard against mistakes
+  (a stale request after a stall), not a forger: the host's runner checks
+  `installed` against its own record of what it installed (section 5).
 - `deploy.done` and `deploy.refused` have the request as their one parent.
 - `deploy.approve` and `deploy.decline` have the request as their one
   parent. The approval binds unit, env, commit, bundle and expiry, which
@@ -291,7 +306,9 @@ agent that is root can remove it too.
 ## 6. Rollback
 
 A rollback is a `deploy.request` with `rollback <version>`, naming the
-bundle that `deploy.done` version installed. It is approved and installed
+bundle that `deploy.done` version installed, and `age rollback`. A
+`rollback` label whose bundle is not that version's is an ordinary request,
+judged by its commit like any other (lux). It is approved and installed
 exactly like a deploy (R2): one signed tap, never automatic.
 
 ## 7. Environments
