@@ -149,7 +149,7 @@ A bundle is a tar of the unit's files **at one commit**:
      device or FIFO);
    - its name, with `/` in front, is a normalized absolute path (no `.`,
      `..` or empty component, no NUL, at most 4,096 bytes) under one of the
-     unit's prefixes, and the request's file list names it;
+     unit's prefixes;
    - no directory between the prefix and the file is a symlink when it is
      written (each directory is opened without following links);
    - a `serve-*.wisp` start file is at most 4,096 bytes;
