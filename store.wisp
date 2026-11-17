@@ -18,11 +18,13 @@
 ;   field/node                 this node's name (its key's name)
 ;   field/ids/<name>/...       identities (field/SPEC-id.md, idmodel.wisp), kept as
 ;                              id.* events are admitted
+;   field/blobs/ab/cdef...     a blob: the bytes whose sha256 is abcdef... (SPEC-node 7.1)
 (module store
   (provide field-start field-append field-admit field-get field-exists field-file
            field-follow field-follow-n field-seen-head field-subscribe
            event-id event-author event-scope event-kind event-time
-           event-parents event-links event-body event-sig bad? bad-reason)
+           event-parents event-links event-body event-sig bad? bad-reason
+           field-blob-put field-blob-get field-blob-exists)
   (require list "std/list.wisp")
   (require str "std/str.wisp")
   (require idmodel "experiment/field/idmodel.wisp")
@@ -123,6 +125,26 @@
     (begin
       (fs-mkdir (event-dir id))
       (fs-write-durable (event-path id) (cat (list "sig " sig "\n" text))))))
+
+  ; ── blobs (SPEC-node 7.1) ─────────────────────────────────────────────
+  ; Content linked from events (link blob <sha256> <size> <type>), kept apart
+  ; from them: written only when the bytes hash to the name, so a blob from
+  ; anywhere is what its hash says. Blobs are not signed and not followed;
+  ; whoever holds an event naming one can fetch it from a store that has it.
+  (define blob-dir (lambda (h) (string-append "field/blobs/" (substring h 0 2))))
+  (define blob-path (lambda (h) (cat (list (blob-dir h) "/" (substring h 2 (string-len h))))))
+  (define field-blob-exists (lambda (h) (if (= (is-id h) 1) (exists (blob-path h)) 0)))
+  ; bytes (as a string) -> their sha256, or "error: ..."
+  (define field-blob-put (lambda (data)
+    (let (h (sha-of data))
+      (if (= (field-blob-exists h) 1) h
+        (begin
+          (fs-mkdir "field/blobs") (fs-mkdir (blob-dir h))
+          (match (fs-write-durable (blob-path h) data) ((ok x) h) ((err e) "error: cannot write the blob")))))))
+  ; the sha256 of a blob -> (ok bytes) or (err why); bytes as a string
+  (define field-blob-get (lambda (h)
+    (if (= (is-id h) 0) (err "not a sha256")
+      (match (fs-read-text (blob-path h)) ((ok t) (ok t)) ((err e) (err "no such blob"))))))
 
   ; ── the canonical encoding ────────────────────────────────────────────
   (define prefix-lines (lambda (word xs)

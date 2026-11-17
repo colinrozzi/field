@@ -291,6 +291,8 @@ lives only in memory.
 | `field/peers/<name>.watch` | the open watch connection's id, or empty |
 | `field/gate/<cid>` | the gate's state per connection (section 10) |
 | `field/gate-keys` | the nodes the gate lets in (section 10) |
+| `field/blobs/<sha[0:2]>/<sha[2:64]>` | a blob's bytes (7.1), written durably |
+| `field/peers/<name>.blobs` | sha256s a peer has yet to fetch, one per line (9.4) |
 
 Recording a seen event writes, in this order: the event file;
 `seen-first` (if there was no head) or `seen-next/<old head>`; `seen-head`;
@@ -301,6 +303,24 @@ then deletes the `unseen` markers; then tells subscribers.
 began), record them all in one seen event. A marker whose event file is
 missing gives no line. The server then empties `field/conn/` and
 `field/watchers` and listens.
+
+### 7.1 Blobs
+
+A **blob** is content an event links instead of carrying: bytes, kept under
+the lowercase hex sha256 of those bytes. An event names one with a link line
+`link blob <sha256> <size> <type>` (2.1), where size is the byte count and
+type a media type (`a-z 0-9 . + -`, one `/`). The node still never reads
+links when it admits an event (section 5); blobs are kept beside events, not
+in them, and are neither signed nor in the seen chain: the hash is the proof.
+
+- A store writes a blob only after checking that the bytes hash to its
+  name, so a blob from anywhere is what its name says.
+- A blob is written by whoever holds the bytes on the node's machine
+  (`field-blob-put` in store.wisp: node-chat's caller, the site's upload,
+  a peer); reading one needs only its hash (8.8).
+- Blobs are kept as long as events, for now: forever.
+
+Ticket 0133 (2026-11-15) added blobs, for files in chat (SPEC-chat 4.1).
 
 ## 8. The TCP protocol
 
@@ -415,6 +435,17 @@ cursor. The connection may carry other requests too; their replies interleave
 with the notices. The watcher list is emptied when the node starts and a
 connection leaves it when it closes.
 
+### 8.8 `blob <sha256>`
+
+```
+-> blob <sha256>\n
+<- ok <n>\n<the blob's bytes>     or   err <n>\nno such blob
+```
+
+Anyone who can reach the node and knows a blob's hash can read it: the hash
+is its only key, so a blob linked from a `private/` event is shared with
+whoever learns that event's links.
+
 ## 9. Peers: following another node
 
 Following is not the node's job: a separate **peer** session dials both
@@ -465,6 +496,16 @@ server3's gate: `server3` pulls server3 into the desktop, and `server3-push`
 pulls the desktop into server3. Both WANTS lists are empty. While a pull
 answers "more" it pulls again every 50 ms. A 60 s tick pulls both ways and
 reopens any watch that has closed.
+
+### 9.4 Blobs
+
+After step 6 of a page (9.2), the peer looks at the link lines of every
+wanted record in it, and for each `link blob <sha256> ...` whose blob the
+local store lacks, sends `blob <sha256>` (8.8) to the remote. It keeps the
+bytes only if they hash to that name. A blob it could not get (the remote
+lacks it, or the answer is wrong) goes in `field/peers/<name>.blobs` and is
+asked for again on each later pull, an idle one too. A missing blob never
+stops events: the event is admitted, its blob follows when it can.
 
 ## 10. The gate
 
@@ -660,5 +701,6 @@ spec states the code.
 11. **The Wisp API.** DESIGN.md:230-242 describes `experiment/lib/field.wisp`
     with `field-append`, `field-blob-put`, and others. What exists is
     `field/client.wisp` (`field-post`, `field-post-to`, `field-read`,
-    `field-after`, `field-head`), and there are no blobs yet. This spec does
+    `field-after`, `field-head`); blobs are `field-blob-put`, `field-blob-get`
+    and `field-blob-exists` in store.wisp (7.1, ticket 0133). This spec does
     not cover any library API.

@@ -1,0 +1,26 @@
+{
+ "name": "w-empty",
+ "about": "typing into an empty document is a right child of the root",
+ "events": [],
+ "writes": [
+  {
+   "id": "e500000000000000000000000000000000000000000000000000000000000002",
+   "from": "colin",
+   "pos": 0,
+   "delete": 0,
+   "insert": "hi"
+  }
+ ],
+ "expect": {
+  "text": "",
+  "ops": [
+   [
+    "i ^ R hi"
+   ]
+  ],
+  "after": [
+   "hi"
+  ],
+  "merged": "hi"
+ }
+}

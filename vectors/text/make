@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""Write the text vectors (README.md here) from the cases below.
+
+    field/vectors/text/make
+
+It holds the reference reader and writer for field/SPEC-text.md (a plain
+character tree; the spec's rules, nothing faster), builds each case's events
+with it, checks that every listed arrival order gives the same result, and
+writes one JSON file per case. Edit the cases here, not the JSON.
+"""
+import bisect, hashlib, itertools, json, re
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+AUTHOR = "c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20"
+T0 = 1794700000000
+SCOPE = "doc/plan"
+ROOT = "^"
+MAX_ORDERS = 120
+
+# --- the reader (SPEC-text 3) ---
+
+NUM = r"(?:0|[1-9][0-9]*)"
+REF = rf"(?:\^|[0-9a-f]{{64}}:{NUM}|@:{NUM})"
+INS = re.compile(rf"i ({REF}) ([LR]) (.+)")
+DEL = re.compile(rf"d ([0-9a-f]{{64}}:{NUM}|@:{NUM}) ([1-9][0-9]*)")
+
+
+def unescape(s):
+    out, i = [], 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\":
+            nxt = s[i + 1] if i + 1 < len(s) else ""
+            if nxt == "n":
+                out.append("\n")
+            elif nxt == "\\":
+                out.append("\\")
+            else:
+                return None
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def escape(s):
+    return s.replace("\\", "\\\\").replace("\n", "\\n")
+
+
+def parse(body):
+    """The ops of a doc.ops body, or None if it is malformed."""
+    if "\n\n" not in body and not body.startswith("\n"):
+        return None
+    ops = body[body.index("\n\n") + 2:] if not body.startswith("\n") else body[1:]
+    out = []
+    for line in ops.split("\n"):
+        if line == "":
+            continue
+        m = INS.fullmatch(line)
+        if m:
+            text = unescape(m.group(3))
+            if not text:
+                return None
+            out.append(("i", m.group(1), m.group(2), text))
+            continue
+        m = DEL.fullmatch(line)
+        if m:
+            out.append(("d", m.group(1), int(m.group(2))))
+            continue
+        return None
+    return out
+
+
+def ref(r):
+    if r == ROOT:
+        return ROOT
+    e, k = r.rsplit(":", 1)
+    return (e, int(k))
+
+
+def rs(c):
+    return ROOT if c == ROOT else f"{c[0]}:{c[1]}"
+
+
+class Node:
+    __slots__ = ("parent", "side", "ch", "deleted", "left", "right")
+
+    def __init__(self, parent, side, ch):
+        self.parent, self.side, self.ch = parent, side, ch
+        self.deleted = False
+        self.left, self.right = [], []
+
+
+class Text:
+    def __init__(self):
+        self.nodes = {ROOT: Node(None, None, "")}
+        self.length = {}       # applied event -> how many characters it inserted
+        self.invalid = []      # ignored events, in arrival order
+        self._order = [ROOT]   # every character in document order (cache)
+        self._vis = []         # the visible ones
+        self._dirty = False
+
+    def _exists(self, e, k, here, count):
+        if e == "@":
+            return k < count
+        return e != here and e in self.length and k < self.length[e]
+
+    def apply(self, eid, body):
+        if eid in self.length or eid in self.invalid:
+            return
+        ops = parse(body)
+        count = 0
+        ok = ops is not None
+        for op in ops or []:
+            r = op[1]
+            if r == ROOT:
+                ok = op[0] == "i"
+            else:
+                e, k = ref(r)
+                n = op[2] if op[0] == "d" else 1
+                ok = self._exists(e, k + n - 1, eid, count)
+            if not ok:
+                break
+            if op[0] == "i":
+                count += len(op[3])
+        if not ok:
+            self.invalid.append(eid)
+            return
+        self.length[eid] = 0
+        for op in ops:
+            self._op(eid, op)
+        self._dirty = True
+
+    def _own(self, eid, r):
+        c = ref(r)
+        return (eid, c[1]) if c != ROOT and c[0] == "@" else c
+
+    def _op(self, eid, op):
+        if op[0] == "i":
+            p, side, text = self._own(eid, op[1]), op[2], op[3]
+            base = self.length[eid]
+            prev = None
+            for i, ch in enumerate(text):
+                c = (eid, base + i)
+                par, sd = (p, side) if i == 0 else (prev, "R")
+                self.nodes[c] = Node(par, sd, ch)
+                kids = self.nodes[par].left if sd == "L" else self.nodes[par].right
+                bisect.insort(kids, c)
+                prev = c
+            self.length[eid] = base + len(text)
+        else:
+            e, k = self._own(eid, op[1])
+            for j in range(op[2]):
+                self.nodes[(e, k + j)].deleted = True
+
+    def order(self):
+        if self._dirty:
+            out, stack = [], [(ROOT, False)]
+            while stack:
+                c, here = stack.pop()
+                if here:
+                    out.append(c)
+                    continue
+                n = self.nodes[c]
+                stack.extend((x, False) for x in reversed(n.right))
+                stack.append((c, True))
+                stack.extend((x, False) for x in reversed(n.left))
+            self._order = out
+            self._vis = [c for c in out if c != ROOT and not self.nodes[c].deleted]
+            self._dirty = False
+        return self._order
+
+    def visible(self):
+        self.order()
+        return self._vis
+
+    def text(self):
+        return "".join(self.nodes[c].ch for c in self.visible())
+
+    # --- the writer (SPEC-text 4) ---
+
+    def write(self, eid, edits):
+        """Apply edits [(pos, delete, insert)], each at a visible position in
+        the text as the previous ones left it, as one event; return its op
+        lines. Keeps the order caches up to date as it goes."""
+        self.order()
+        self.length[eid] = 0
+        lines = []
+
+        def show(c):
+            return ROOT if c == ROOT else (f"@:{c[1]}" if c[0] == eid else rs(c))
+
+        for e in edits:
+            pos, dl, ins = (tuple(e) + ("",))[:3]
+            gone = self._vis[pos:pos + dl]
+            runs = []
+            for c in gone:
+                if runs and runs[-1][0][0] == c[0] and runs[-1][0][1] + runs[-1][1] == c[1]:
+                    runs[-1][1] += 1
+                else:
+                    runs.append([c, 1])
+            for c, n in runs:
+                lines.append(f"d {show(c)} {n}")
+                self._op(eid, ("d", show(c), n))
+            del self._vis[pos:pos + dl]
+            if ins:
+                L = self._vis[pos - 1] if pos > 0 else ROOT
+                at = self._order.index(L)
+                R = self._order[at + 1] if at + 1 < len(self._order) else None
+                if not self.nodes[L].right:
+                    p, side, where = L, "R", at + 1
+                else:
+                    p, side, where = R, "L", at + 1   # R has no left children: the new run goes just before it
+                lines.append(f"i {show(p)} {side} {escape(ins)}")
+                base = self.length[eid]
+                self._op(eid, ("i", rs(p), side, ins))
+                new = [(eid, base + i) for i in range(len(ins))]
+                self._order[where:where] = new
+                self._vis[pos:pos] = new
+        return lines
+
+
+# --- events and cases ---
+
+def eid(case, n):
+    return f"e{case:02d}" + "0" * (61 - len(str(n))) + str(n)
+
+
+def event(i, t, parents, body):
+    lines = ["sig " + "0" * 128, "field 1", "author " + AUTHOR, "scope " + SCOPE, "kind doc.ops",
+             f"time {T0 + t * 1000}"] + [f"parent {p}" for p in sorted(parents)]
+    lines.append(f"body {len(body.encode())}")
+    return [i, SCOPE, "doc.ops", "\n".join(lines) + "\n" + body]
+
+
+def body_of(who, lines):
+    return f"from {who}\n\n" + "\n".join(lines)
+
+
+def parents_of(ev):
+    return [l[7:] for l in ev[3].split("\n") if l.startswith("parent ")]
+
+
+def body_part(ev):
+    head, _, rest = ev[3].partition("\nbody ")
+    return rest.split("\n", 1)[1]
+
+
+class Writer:
+    """One person's view: the events they have seen, and their heads."""
+
+    def __init__(self, case, who):
+        self.case, self.who, self.t, self.heads = case, who, Text(), set()
+
+    def see(self, *evs):
+        for ev in evs:
+            self.t.apply(ev[0], body_part(ev))
+            self.heads = (self.heads - set(parents_of(ev))) | {ev[0]}
+
+    def edit(self, n, edits, t=None):
+        i = eid(self.case, n)
+        lines = self.t.write(i, edits)
+        ev = event(i, n if t is None else t, self.heads, body_of(self.who, lines))
+        self.heads = {i}
+        self.check(ev)
+        return ev
+
+    def check(self, ev):
+        mine = self.t.text()
+        self.t._dirty = True
+        assert self.t.text() == mine, "writer caches drifted from the tree"
+
+
+def orders(evs):
+    """Arrival orders (indices into evs) that respect parents: all of them if
+    there are at most MAX_ORDERS, else the array order and seeded random ones.
+    Never builds more than MAX_ORDERS + 1 lists."""
+    idx = {e[0]: j for j, e in enumerate(evs)}
+    need = [{idx[p] for p in parents_of(e) if p in idx} for e in evs]
+    out = []
+
+    def go(done, seq):
+        if len(out) > MAX_ORDERS:
+            return
+        if len(seq) == len(evs):
+            out.append(list(seq))
+            return
+        for j in range(len(evs)):
+            if j not in done and need[j] <= done:
+                done.add(j); seq.append(j)
+                go(done, seq)
+                done.discard(j); seq.pop()
+
+    go(set(), [])
+    if len(out) <= MAX_ORDERS:
+        return out
+    x, out, tries = 7, [list(range(len(evs)))], 0
+    while len(out) < MAX_ORDERS and tries < 10 * MAX_ORDERS:
+        tries += 1
+        done, seq = set(), []
+        while len(seq) < len(evs):
+            ready = [j for j in range(len(evs)) if j not in done and need[j] <= done]
+            x = (x * 1103515245 + 12345) % 2 ** 31
+            j = ready[x % len(ready)]
+            done.add(j); seq.append(j)
+        if seq not in out:
+            out.append(seq)
+    return out
+
+
+def read(evs, order):
+    t = Text()
+    for j in order:
+        t.apply(evs[j][0], body_part(evs[j]))
+    return t
+
+
+cases = []
+
+
+def case(name, about, evs, big=False):
+    os = orders(evs) if not big else [list(range(len(evs)))]
+    results = []
+    for o in os:
+        t = read(evs, o)
+        seen, after = 0, {}
+        for x in t.order()[1:]:
+            seen += not t.nodes[x].deleted
+            after[rs(x)] = seen
+        results.append((t.text(), [rs(c) for c in t.visible()], sorted(t.invalid), after))
+    assert all(r == results[0] for r in results), f"{name}: orders disagree"
+    text, ids, invalid, after = results[0]
+    if big:
+        exp = {"length": len(text), "sha256": hashlib.sha256(text.encode()).hexdigest(),
+               "start": text[:80], "end": text[-80:], "invalid": invalid}
+    else:
+        exp = {"text": text, "ids": ids, "invalid": invalid, "cursor": after}
+    cases.append({"name": name, "about": about, "events": evs, "orders": os, "expect": exp})
+
+
+def write_case(name, about, base, writes):
+    """Writer vector: each write starts from the same state (base events)."""
+    state = []
+    for w in writes:
+        wr = Writer(w["case"], w["who"])
+        wr.see(*base)
+        ev = wr.edit(w["n"], [(w["pos"], w.get("delete", 0), w.get("insert", ""))])
+        state.append((w, ev, wr.t.text()))
+    merged = read(base + [s[1] for s in state], range(len(base) + len(state))).text()
+    for o in orders(base + [s[1] for s in state]):
+        assert read(base + [s[1] for s in state], o).text() == merged, f"{name}: merge depends on order"
+    cases.append({
+        "name": name, "about": about, "events": base,
+        "writes": [{"id": s[1][0], "from": s[0]["who"], "pos": s[0]["pos"], "delete": s[0].get("delete", 0),
+                    "insert": s[0].get("insert", "")} for s in state],
+        "expect": {"text": read(base, range(len(base))).text(),
+                   "ops": [body_part(s[1]).split("\n\n", 1)[1].split("\n") for s in state],
+                   "after": [s[2] for s in state],
+                   "merged": merged}})
+
+
+def raw(c, n, t, parents, who, lines):
+    return event(eid(c, n), t, parents, body_of(who, lines))
+
+
+# 1: typing into an empty document, then on at the end
+c = 1
+a = Writer(c, "colin")
+e1 = a.edit(1, [(0, 0, "hello")])
+e2 = a.edit(2, [(5, 0, " world")])
+case("typing", "one run, then a second run as the right child of the first run's last character", [e1, e2])
+
+# 2: typing in the middle of a run splits it
+c = 2
+a = Writer(c, "colin")
+e1 = a.edit(1, [(0, 0, "hello world")])
+e2 = a.edit(2, [(5, 0, ",")])
+e3 = a.edit(3, [(0, 0, "Oh, ")])
+e4 = a.edit(4, [(len("Oh, hello, world"), 0, "!")])
+case("split", "an insert inside a run is a left child of the next character; at the start, of the first", [e1, e2, e3, e4])
+
+# 3: deletes inside a run, across two events, and typing where deleted text was
+c = 3
+a = Writer(c, "colin")
+e1 = a.edit(1, [(0, 0, "abcdef")])
+e2 = a.edit(2, [(6, 0, "ghij")])
+e3 = a.edit(3, [(4, 4)])            # "ef" from e1 and "gh" from e2: two d lines
+e4 = a.edit(4, [(1, 1)])            # "b"
+e5 = a.edit(5, [(1, 0, "B")])       # after "a", where "b" was: a left child of the tombstone
+case("deletes", "a delete across two events is two d lines; typing next to a tombstone", [e1, e2, e3, e4, e5])
+
+# 4: two people type at the same spot at the same time: no interleaving
+c = 4
+a, b = Writer(c, "colin"), Writer(c, "tova")
+e1 = a.edit(1, [(0, 0, "ab")])
+b.see(e1)
+e2 = a.edit(2, [(1, 0, "XYZ")])
+e3 = b.edit(3, [(1, 0, "123")])
+a.see(e3); b.see(e2)
+e4 = a.edit(4, [(len(a.t.text()), 0, ".")])
+case("concurrent-same-spot", "concurrent runs at one spot come out whole, ordered by event id; the next edit joins both heads",
+     [e1, e2, e3, e4])
+
+# 5: concurrent typing at the end and at the start
+c = 5
+a, b = Writer(c, "colin"), Writer(c, "tova")
+e1 = a.edit(1, [(0, 0, "mid")])
+b.see(e1)
+e2 = a.edit(2, [(3, 0, " end-a")])
+e3 = b.edit(3, [(3, 0, " end-b")])
+e4 = a.edit(4, [(0, 0, "start-a ")])
+e5 = b.edit(5, [(0, 0, "start-b ")])
+case("concurrent-ends", "concurrent appends are right siblings, concurrent prepends left siblings of the first character",
+     [e1, e2, e3, e4, e5])
+
+# 6: one deletes a word while another types inside it
+c = 6
+a, b = Writer(c, "colin"), Writer(c, "tova")
+e1 = a.edit(1, [(0, 0, "one two three")])
+b.see(e1)
+e2 = a.edit(2, [(4, 4)])            # "two "
+e3 = b.edit(3, [(6, 0, "o-o-o")])   # inside "two"
+e4 = b.edit(4, [(4, 2)])            # "tw", overlapping a's delete
+case("concurrent-delete", "text typed inside concurrently deleted text survives; overlapping deletes are idempotent",
+     [e1, e2, e3, e4])
+
+# 7: several inserts in one event, referring to their own text with @:k
+c = 7
+E1 = eid(c, 1)
+e1 = raw(c, 1, 1, [], "colin", ["i ^ R ace", "i @:0 R b", "i @:2 L d", "i @:3 R !", "d @:5 1", "i @:2 R f"])
+e2 = raw(c, 2, 2, [E1], "colin", [f"i {E1}:4 R e"])
+case("own-refs", "@:k is offset k of this event's inserted text, across all its i lines; a delete may name its own text",
+     [e1, e2])
+
+# 8: siblings are ordered by event id, then k as a number (9 before 10)
+c = 8
+e1 = raw(c, 1, 1, [], "colin", ["i ^ R abcdefghi", "i ^ R Y", "i ^ R Z"])
+E1 = eid(c, 1)
+e2 = raw(c, 2, 2, [E1], "colin", [f"i {E1}:9 L 9", f"i {E1}:9 L 0"])
+case("sibling-order", "root's right children e:0, e:9, e:10 in that order; two left children of one event by k",
+     [e1, e2])
+
+# 9: code points, escapes and lines
+c = 9
+a, b = Writer(c, "colin"), Writer(c, "tova")
+e1 = a.edit(1, [(0, 0, "héllo 😀 世界")])
+b.see(e1)
+e2 = a.edit(2, [(7, 0, "!")])                       # after the emoji: code points, not UTF-16 or bytes
+e3 = b.edit(3, [(len("héllo 😀 世界"), 0, "\nline two \\ back\\nslash")])
+case("code-points", "offsets count code points; \\n and \\\\ are the only escapes", [e1, e2, e3])
+
+# 10: typing backwards: each run a left child of the last, a deep left chain
+c = 10
+a = Writer(c, "colin")
+evs = [a.edit(1, [(0, 0, "z")])]
+for n in range(2, 7):
+    evs.append(a.edit(n, [(0, 0, chr(ord("z") - n + 1))]))
+case("backwards", "each insert at the start is a left child of the previous first character", evs)
+
+# 11: invalid events are ignored whole, and so is anything built on them
+c = 11
+E1 = eid(c, 1)
+good = raw(c, 1, 1, [], "colin", ["i ^ R base"])
+bad = [
+    ("bad-escape", [f"i {E1}:3 R x\\ty"]),
+    ("unknown-event", ["i " + "f" * 64 + ":0 R x"]),
+    ("past-the-end", [f"i {E1}:4 R x"]),
+    ("forward-own-ref", ["i @:0 R x", "i @:1 R y"]),
+    ("delete-root", ["d ^ 1"]),
+    ("delete-past-end", [f"d {E1}:2 3"]),
+    ("empty-text", [f"i {E1}:3 R "]),
+    ("uppercase-hex", [f"i {E1.upper()}:3 R x"]),
+    ("leading-zero", [f"i {E1}:03 R x"]),
+    ("bad-side", [f"i {E1}:3 X x"]),
+    ("two-spaces", [f"d {E1}:0  1"]),
+    ("unknown-op", [f"x {E1}:0 1"]),
+    ("good-then-bad", [f"i {E1}:3 R !", f"d {E1}:9 1"]),
+]
+evs = [good]
+for j, (_, lines) in enumerate(bad):
+    evs.append(raw(c, j + 2, j + 2, [E1], "colin", lines))
+nb = len(bad) + 2
+evs.append(event(eid(c, nb), nb, [E1], "from colin\ni ^ R no blank line"))
+evs.append(raw(c, nb + 1, nb + 1, [eid(c, 5)], "colin", [f"i {eid(c, 5)}:0 R z"]))  # built on an invalid event
+evs.append(raw(c, nb + 2, nb + 2, [E1], "colin", [f"i {E1}:3 R !", "", f"d {E1}:0 1"]))  # valid: blank lines skipped
+evs.append(raw(c, nb + 3, nb + 3, [E1], "colin", []))                                    # valid: no ops
+case("invalid", "a malformed line, an unknown character or an out-of-range delete makes the reader ignore the whole event",
+     evs)
+
+# 12: a big document: 20,000 runs, a deep left chain, splits and deletes
+c = 12
+a = Writer(c, "colin")
+seed = 12345
+
+
+def rnd(n):
+    global seed
+    seed = (seed * 1103515245 + 12345) % 2 ** 31
+    return seed % n
+
+
+words = ["field", "text", "run", "event", "fugue", "doc", "node", "page", "", "wisp"]
+evs, runs, n = [], 0, 1
+while runs < 20000:
+    edits, size, mode = [], 0, n % 3
+    vis = len(a.t.visible())
+    cur = rnd(vis + 1)
+    while size < 14000 and runs < 20000:
+        w = words[rnd(len(words))] or "é😀"
+        if mode == 0:                               # typing backwards at the start
+            edits.append((0, 0, w + " ")); size += 16
+        elif mode == 1:                             # writing on with corrections
+            if rnd(5) == 0 and cur > 3:
+                cur -= rnd(3) + 1
+            edits.append((cur, 0, w + " ")); cur += len(w) + 1; size += 18
+        else:                                       # scattered edits and deletes
+            vis = len(a.t.visible()) + sum(len(e[2]) - e[1] for e in edits)
+            p = rnd(vis + 1)
+            d = min(rnd(4) if rnd(3) == 0 else 0, vis - p)
+            edits.append((p, d, w)); size += 90 + 85 * (d > 0)
+        runs += 1
+    ev = a.edit(n, edits)
+    while len(body_part(ev).encode()) > 16384:
+        raise SystemExit(f"big: event {n} body too large")
+    evs.append(ev)
+    n += 1
+case("big", f"{runs} runs in {len(evs)} events: a long left chain, splits, deletes; walks must loop, not recurse",
+     evs, big=True)
+
+# --- writer vectors ---
+
+c = 50
+base1 = [Writer(c, "colin").edit(1, [(0, 0, "hello world")])]
+B = lambda **w: dict(case=c, who="colin", n=2, **w)
+write_case("w-empty", "typing into an empty document is a right child of the root", [],
+           [B(pos=0, insert="hi")])
+write_case("w-end", "at the end: a right child of the last character", base1,
+           [B(pos=11, insert="!")])
+write_case("w-middle", "inside a run: a left child of the next character", base1,
+           [B(pos=5, insert=",")])
+write_case("w-start", "at the start of a document: a left child of the first character", base1,
+           [B(pos=0, insert="Oh, ")])
+wt = Writer(c, "colin"); wt.see(*base1)
+base2 = base1 + [wt.edit(2, [(5, 6)])]                         # "hello", " world" deleted
+write_case("w-tombstone", "after a character followed by tombstones: a left child of the first tombstone", base2,
+           [dict(case=c, who="colin", n=3, pos=5, insert=" there")])
+wt = Writer(c, "colin")
+evs = [wt.edit(1, [(0, 0, "abc")]), wt.edit(2, [(3, 0, "def")])]
+write_case("w-delete-two-events", "a delete across two events is two d lines, in document order", evs,
+           [dict(case=c, who="colin", n=3, pos=1, delete=4)])
+write_case("w-replace", "replace: the d lines, then the i line", base1,
+           [B(pos=6, delete=5, insert="field")])
+write_case("w-concurrent", "two writers at the same spot from the same state: each run comes out whole", base1,
+           [B(pos=5, insert=" big"), dict(case=c, who="tova", n=3, pos=5, insert=" small")])
+write_case("w-code-points", "positions count code points", [Writer(c, "colin").edit(1, [(0, 0, "a😀b")])],
+           [B(pos=2, insert="é")])
+
+for f in HERE.glob("*.json"):
+    f.unlink()
+for j, k in enumerate(cases, 1):
+    (HERE / f"{j:02d}-{k['name']}.json").write_text(json.dumps(k, indent=1, ensure_ascii=False) + "\n")
+print(f"{len(cases)} cases written")

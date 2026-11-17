@@ -1,0 +1,44 @@
+{
+ "name": "w-concurrent",
+ "about": "two writers at the same spot from the same state: each run comes out whole",
+ "events": [
+  [
+   "e500000000000000000000000000000000000000000000000000000000000001",
+   "doc/plan",
+   "doc.ops",
+   "sig 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\nfield 1\nauthor c306cf482f62774309aaba7c036f28f49383815893376cae7ad99c47a31fdb20\nscope doc/plan\nkind doc.ops\ntime 1794700001000\nbody 29\nfrom colin\n\ni ^ R hello world"
+  ]
+ ],
+ "writes": [
+  {
+   "id": "e500000000000000000000000000000000000000000000000000000000000002",
+   "from": "colin",
+   "pos": 5,
+   "delete": 0,
+   "insert": " big"
+  },
+  {
+   "id": "e500000000000000000000000000000000000000000000000000000000000003",
+   "from": "tova",
+   "pos": 5,
+   "delete": 0,
+   "insert": " small"
+  }
+ ],
+ "expect": {
+  "text": "hello world",
+  "ops": [
+   [
+    "i e500000000000000000000000000000000000000000000000000000000000001:5 L  big"
+   ],
+   [
+    "i e500000000000000000000000000000000000000000000000000000000000001:5 L  small"
+   ]
+  ],
+  "after": [
+   "hello big world",
+   "hello small world"
+  ],
+  "merged": "hello big small world"
+ }
+}

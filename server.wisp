@@ -13,6 +13,9 @@
 ;                                         <kind> <len>\n" and its file (as get);
 ;                                         the cursor moves past unshared ones
 ;   admit <sig> <len>\n<text>          -> the event's id
+;   blob <sha256>                      -> the blob's bytes (SPEC-node 7.1):
+;                                         anyone who can reach this store and
+;                                         knows the hash can read it
 ;   watch                              -> the head now; then, unasked, one more
 ;                                         "ok" reply holding the new head each
 ;                                         time this store sees a new event
@@ -149,10 +152,13 @@
                         (if (string=? verb "follow") (do-follow w)
                         (if (string=? verb "pull") (do-pull w)
                           (if (string=? verb "get") (do-get w)
+                          (if (string=? verb "blob")
+                            (if (< (length w) 2) (err-reply "blob wants <sha256>")
+                              (match (field-blob-get (list-get w 1)) ((ok b) (ok-reply b)) ((err e) (err-reply e))))
                             (if (string=? verb "watch")
                               (begin (fs-append WATCHERS (string-append cid "\n"))
                                      (ok-reply (field-seen-head)))
-                              (err-reply "unknown request")))))))
+                              (err-reply "unknown request"))))))))
                     (drain store cid (rest))))))))))))
 
   (define field-connection (lambda (cid)

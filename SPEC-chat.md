@@ -60,6 +60,13 @@ builds the event (scope `chat/<thread>`, the given kind, time now, the
 parents sorted with repeats removed, no links, the body as given), signs it
 with `chat`, and admits it to the node at `127.0.0.1:7800`.
 
+In a `send`, lines `link blob <sha256> <size> <type>` right after
+`<parents>` become the event's links (SPEC-node 7.1), and the body starts
+after them. Each blob must already be in this node's store; otherwise the
+reply is `err` with `a link is not "link blob <sha256> <size> <type>" for a
+blob in this node's store`, so no event names a blob its peers can't fetch
+(ticket 0133).
+
 Replies use the node's framing (`ok <n>\n<id>` or `err <n>\n<reason>`):
 
 | reason | when |
@@ -124,6 +131,13 @@ Reading a body, exactly:
 
 Writers SHOULD end each header line with `\n` and SHOULD NOT repeat a key.
 Unknown keys are ignored.
+
+The exception is `file` (ticket 0133), which a message repeats once per
+file it carries: `file <sha256> <size> <type> <name>`, the name being the
+rest of the line. Each names a blob the event also links (SPEC-node 7.1).
+A reader takes every `file` line of the head, in order; the text may then be
+empty. The browser shows images inline and the rest as downloads;
+`lib/chat ME fetch ID` saves them.
 
 ### 4.2 Kinds
 

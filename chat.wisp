@@ -9,6 +9,10 @@
 ;   post <len>\n<thread>\n<kind>\n<body>   -> "ok <len>\n<id>" or "err <len>\n<why>"
 ;   send <len>\n<thread>\n<kind>\n<parent ids, space-separated, or ->\n<body>
 ;
+; In a send, lines "link blob <sha256> <size> <type>" right after the parents
+; become the event's links (SPEC-node 7.1); each blob must already be in this
+; node's store (field-blob-put), so a peer can always fetch what it names.
+;
 ; kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set or chat.edit, and the event's
 ; scope is chat/<thread>. Or one of these, and <thread> is the scope itself: mail.read in
 ; mail/<name> (field/SPEC-mailbox.md); group.add, group.remove, group.open in group/<name>
@@ -24,6 +28,7 @@
 (module chat
   (provide chat-connection chat-data chat-closed chat-serve)
   (require client "experiment/field/client.wisp")
+  (require store "experiment/field/store.wisp")
   (require str "std/str.wisp")
   (require list "std/list.wisp")
 
@@ -89,12 +94,42 @@
   (define in-scope? (lambda (t p)
     (if (<= (string-len t) (string-len p)) 0 (if (string=? (substring t 0 (string-len p)) p) 1 0))))
 
+  ; "link blob <sha256> <size> <type>", its blob here -> 1
+  (define type-ok (lambda (t i slash)
+    (if (= i (string-len t)) (if (= slash 1) 1 0)
+      (let (c (s32 (string-ref t i)))
+        (if (= c 47) (if (or (= slash 1) (= i 0) (= i (- (string-len t) 1))) 0 (type-ok t (+ i 1) 1))
+          (if (or (and (<= 97 c) (<= c 122)) (and (<= 48 c) (<= c 57)) (= c 45) (= c 46) (= c 43)) (type-ok t (+ i 1) slash) 0))))))
+  (define link-ok? (lambda (l)
+    (let (w (filter (lambda (x) (< 0 (string-len x))) (split l " ")))
+      (if (and (= (length w) 5) (string=? (list-get w 0) "link") (string=? (list-get w 1) "blob")
+               (= (field-blob-exists (list-get w 2)) 1) (< 0 (str->num (list-get w 3))) (< (string-len (list-get w 4)) 100)
+               (= (type-ok (list-get w 4) 0 0) 1))
+        1 0))))
+  ; the link lines at the front of s -> (list links rest), or (list) when one is bad
+  (define take-links (lambda (s acc)
+    (if (not (starts-with s "link ")) (list acc s)
+      (let (j (string-index s b-nl 0))
+        (if (< j 0) (list)
+          (let (l (substring s 0 j))
+            (if (= (link-ok? l) 0) (list)
+              (take-links (substring s (+ j 1) (string-len s)) (list-push acc (substring l 5 (string-len l)))))))))))
+
   (define parent-list (lambda (line)
     (if (string=? line "-") (list)
       (filter (lambda (w) (< 0 (string-len w))) (split line " ")))))
 
-  ; thread\nkind\nbody, or with parents: thread\nkind\nparents\nbody -> the reply
+  ; thread\nkind\nbody, or with parents: thread\nkind\nparents\n[links]body -> the reply
   (define do-post (lambda (p with-parents)
+    (if (= with-parents 0) (do-post-links p 0 (list))
+      (let (i (string-index p b-nl))
+        (let (j (if (< i 0) -1 (string-index p b-nl (+ i 1))))
+          (let (k (if (< j 0) -1 (string-index p b-nl (+ j 1))))
+            (if (< k 0) (do-post-links p 1 (list))
+              (let (t (take-links (substring p (+ k 1) (string-len p)) (list)))
+                (if (null? t) (reply "err" "a link is not \"link blob <sha256> <size> <type>\" for a blob in this node's store")
+                  (do-post-links (string-append (substring p 0 (+ k 1)) (list-get t 1)) 1 (list-get t 0)))))))))))
+  (define do-post-links (lambda (p with-parents links)
     (let (i (string-index p b-nl))
       (let (j (if (< i 0) -1 (string-index p b-nl (+ i 1))))
         (let (k (if (= with-parents 0) j (if (< j 0) -1 (string-index p b-nl (+ j 1)))))
@@ -112,7 +147,7 @@
                     (let (r (field-post-to FIELD (signer kind (substring p (+ k 1) (string-len p))) (if (string=? (scope-for kind) "") (string-append "chat/" thread) thread) kind
                                         (id-body kind thread (substring p (+ k 1) (string-len p)))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
-                                        (list)))
+                                        links))
                       (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))))))
 
   ; Handle every complete request in buf -> what's left.
