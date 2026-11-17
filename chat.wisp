@@ -19,7 +19,8 @@
 ; (field/SPEC-group.md); doc.set, doc.edit in doc/<name>; id.key, id.retire in id/<name>
 ; (field/SPEC-id.md), signed with this node's own key (field/node), the registrar;
 ; git.push in git/<repo> (field/SPEC-git.md), signed the same way: the node
-; vouches that a ref moved in a repo it holds.
+; vouches that a ref moved in a repo it holds. check.start and check.result in
+; check/<repo> (field/SPEC-git.md 5), signed by the checker's own key.
 ; An id.key whose body has "key new" makes the name's key id.<name> in this
 ; daemon (if it has none) and writes that key.
 ; Bytes so far wait in field/chat-conn/<cid>, as a request can arrive in pieces.
@@ -51,7 +52,7 @@
 
   (define kind-ok? (lambda (k)
     (member k (list "chat.msg" "chat.join" "chat.leave" "chat.branch" "chat.set" "chat.edit" "mail.read"
-                    "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire" "git.push") string=?)))
+                    "group.add" "group.remove" "group.open" "doc.set" "doc.edit" "id.key" "id.retire" "git.push" "check.start" "check.result") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
@@ -59,7 +60,8 @@
       (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "group.")) "group/"
         (if (and (< 4 (string-len k)) (string=? (substring k 0 4) "doc.")) "doc/"
           (if (and (< 3 (string-len k)) (string=? (substring k 0 3) "id.")) "id/"
-            (if (string=? k "git.push") "git/" "")))))))
+            (if (string=? k "git.push") "git/"
+              (if (and (< 6 (string-len k)) (string=? (substring k 0 6) "check.")) "check/" ""))))))))
   ; id.* and git.push are signed by this node's own key. The rest by the
   ; key of the body's `from`, id.<from> (field/SPEC-id.md 5), or "" if this
   ; daemon holds none: the chat keys stopped at rules step C.
@@ -135,7 +137,7 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire or git.push")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, check.start or check.result")
                   (if (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                     (reply "err" (string-append kind " goes in " (scope-for kind) "<name>"))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")

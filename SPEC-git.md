@@ -52,3 +52,38 @@ that pipes `git-receive-pack`/`git-upload-pack` over that authenticated
 stream, with the pusher being the key that signed the challenge (or a
 person's identity key, field/SPEC-id.md). That would replace the ssh key and
 git-serve, and make `from` a real identity. Not built in 0096.
+
+## 5. Checks on each pushed commit
+
+Ticket 0154 (beck, design agreed with tova and ada in the ticket's branch).
+Step 3 of 0095. A worker on the desktop (`lib/checks-worker` in
+experiment) reads the `git.push` events, checks out each new commit in a
+scratch worktree, and runs the checks the changed files call for. It
+reports in scope `check/<repo>`, signed by its own identity `checks`
+through node-chat (rules: `check/ id`).
+
+| kind | body |
+|---|---|
+| `check.start` | `from checks`, `repo`, `commit <40 hex>`, `ref`, `checks <names, space-separated>` |
+| `check.result` | `from checks`, `repo`, `commit`, `ref`, `status pass\|fail\|error`, a blank line, then one line per check: `<name> pass\|fail\|timeout <seconds>s` |
+
+- A `check.result` has its `check.start` as its one parent.
+- It links the job's log as a blob, `link blob <sha256> <size> text/plain`
+  (SPEC-node 7.1), kept to the last 256 KB, so the log reaches server3 and
+  the page can show it behind the login.
+- `status` is `pass` when every check passed, `fail` when one failed or
+  timed out, and `error` when the job itself could not run (the checkout
+  failed, or the job hit its overall limit). An error says why in the text.
+- A commit with no check the changed files call for still gets a
+  `check.result`, with `status pass` and no check lines beyond the syntax
+  pass.
+
+**Reading it** (ada's /personal/prs, 0153): key on repo and commit, never
+on ref, because a ref moves. The newest `check.result` for a commit is its
+status. A `check.start` with no result means the checks are running. No
+events at all means the commit has not been checked.
+
+**Who writes it.** Like chat, anything on the desktop can post as `checks`:
+the trust is the machine's (field/chat.wisp, top). A forged result can only
+mislead. Merging still needs colin's signed approval of that exact head
+(0153).
