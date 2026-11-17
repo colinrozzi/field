@@ -89,3 +89,11 @@ install.sh fetches `latest/APPROVAL`. It checks:
 - the kind is release.approve and the repo is the expected one.
 
 It then fetches the artifact and checks its size and sha256 against the body before installing it. GitHub's release of the same tag is the fallback, checked against the same approval.
+
+`theater-repl upgrade` makes the same checks, with the keys built into the binary. It also refuses a downgrade, and runs the new binary's `version` before replacing the old one. An approval that is there but fails a check stops the install; only an unreachable source falls through to the next.
+
+**What this proves, and what it doesn't (lux).** A client installs any binary that one of its built-in keys approved by sha256. It doesn't repeat the updater's other checks: the builder key, the tag at its commit, GitHub's build. So it is only as strong as the weakest built-in key.
+- Under option (a), any desktop agent can sign as tova (F4).
+- A built-in key can't be revoked by a route an attacker couldn't also use: a stolen key can sign the release that would remove it.
+
+That is no worse than GitHub's releases, which the desktop can also write. The real gain comes when the built-in approvers are the phone alone (or tova and the phone together).
