@@ -55,9 +55,9 @@ All in scope `actions/<repo>`. Rules: `actions/ id`.
   job.
 - **Run.** A runner takes only jobs whose `runs-on` is its host, whose
   `from` is the dispatcher's identity, and whose **author key** is a current
-  key of that identity (SPEC-id). Rules give `actions/` to every identity, so
-  the `from` header alone proves nothing: without the key check, anyone could
-  post a job for a merge, tag or deploy workflow at any commit. It runs each
+  key of that identity (SPEC-id). The node already admits an event under the
+  `id` rule only from a current key of the identity its `from` names (SPEC-id
+  5); the runner checks again, so a job never rests on the rules alone. It runs each
   job once, and records that before running it.
 - **Logs.** Each step's own output is a blob of its own: its last 8 KB when
   it passed, 64 KB when it failed or timed out, and at most 512 KB for all of
@@ -92,10 +92,12 @@ All in scope `actions/<repo>`. Rules: `actions/ id`.
 - A job with no start is queued. A start with no result is running.
 - The newest result for a (workflow, commit) is that workflow's status for
   the commit.
-- Count a result (and a `check.result`) only when its author is a current
-  key of `actions` or `checks` (SPEC-id): anyone may write in these scopes,
-  so a result signed by any other key is a forgery to ignore. lib/pr,
-  deploy-request and the PR and commit pages all do.
+- Count a result (and a `check.result`) only when its `from` is `actions` or
+  `checks`. Every identity may write in these scopes as itself, so a result
+  from any other identity (a `check.result` from `tova` saying pass) is not a
+  check. The node has already tied `from` to the author key (SPEC-id 5).
+  lib/pr and deploy-request check the author key against those identities;
+  the PR and commit pages check `from`.
 
 ## 4. Who writes it, and the environment of a step
 
