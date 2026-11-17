@@ -230,6 +230,29 @@ A bundle is a tar of the unit's files **at one commit**:
       `after` chain, through the same merge's requests, comes back to its own
       unit is refused at once with "after cycle"; the deploy workflow also
       refuses such a cycle before it posts any request (lux).
+   9. the request was asked against what is installed now, and goes back
+      only as a true rollback. Only the host's runner knows what it
+      installed, so this is the one check a stale or mislabelled request
+      cannot pass (lux, ada, beck; after the 2026-11-17 backlog):
+      - the runner keeps its own record of every version it installed, per
+        unit and env (`done.json` in its root-owned state, written as it
+        posts each `deploy.done`, field units too). It never rebuilds that
+        record from the field's `deploy.done` events, which a key a
+        registrar added could forge. If the record is lost, every request
+        is refused as stale until a root step restores it;
+      - the request's `installed <version> <commit>` (`0 -` when nothing is
+        installed) must equal the newest version in that record and its
+        commit. Otherwise: "stale: asked against version N, installed is
+        version M". A request without `installed` is refused;
+      - a request with `rollback V` passes this check only if V is in the
+        record and the request's bundle is the bundle V installed.
+        Otherwise: "the rollback label does not match version V";
+      - any other request, when something is installed, must be a commit
+        that is not an ancestor of the installed one. The runner asks the
+        host's bare repo, as the repo's owner and never as root (`git
+        merge-base --is-ancestor`), and an answer of older, or any failure
+        to answer, refuses it: "older than what is installed … and not a
+        rollback".
 
    Then `install_bundle` checks **every member before writing any**, so a
    bundle installs whole or not at all:
