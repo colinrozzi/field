@@ -40,6 +40,7 @@ machine) can build to the same bytes.
 |---|---|---|---|
 | `release.request` | `release/<repo>` | the runner, as `actions` | `from actions`, `repo`, `tag`, `commit` (40 hex), `job` (the action.job id); a blank line; one `<name> <sha256> <size>` line per artifact |
 | `release.approve` | `release/approve/<repo>` | an approver of the repo | `from`, `request` (its id), `repo`, `tag`, `commit`, optionally `rollback yes`; a blank line; the request's artifact lines, unchanged |
+| `release.refused` | `release/<repo>` | the updater, as `runner.server3` | `from`, `approval` (its id), `repo`, `tag`; a blank line; the reason. Its parent is the approval. Readers count it only from that identity's keys |
 
 - A request's parent is its action.result. An approval's parent is its request.
 - node-chat posts release.request (field/chat.wisp). An approval is signed in the approver's daemon session and admitted directly (`lib/release ME approve`), since node-chat writes nothing in release/approve/.
@@ -79,7 +80,7 @@ Only the root-owned updater on server3 (`lib/release-updater`, deploy_trust's pa
 
 It then writes `releases/<repo>/<tag>/` (links into the store, plus APPROVAL, opened with O_EXCL and O_NOFOLLOW) and swaps `latest` to it in one rename.
 
-An existing tag folder is reused only if its links and its APPROVAL's manifest are this approval's; otherwise the approval is refused. A failed check moves nothing and is logged. `--dry-run` prints what it would do.
+An existing tag folder is reused only if its links and its APPROVAL's manifest are this approval's; otherwise the approval is refused. A failed check moves nothing, is logged, and is posted as release.refused (section 3) so alerts and the page see it. `--dry-run` prints what it would do.
 
 ## 6. Install
 
