@@ -109,10 +109,10 @@ A bundle is a tar of the unit's files **at one commit**:
 
 | kind | scope | author | headers (then text) |
 |---|---|---|---|
-| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `after <units, space-separated, or ->`, `rollback <old version>` (only for a rollback), `installed <version> <commit or ->`, `age newer\|rollback`; text: the installed paths that change, a line each |
+| `deploy.request` | `deploy/<unit>` | the deploy workflow's runner (`runner.desktop`) | `from`, `unit`, `env`, `host`, `commit`, `bundle <sha256>`, `version N`, `expires`, `services <names, space-separated, or ->`, `after <units, space-separated, or ->`, `rollback <old version>` (only for a rollback), `installed <version> <commit or ->`, `age newer\|rollback`, `files <sha256>` (a field unit only, 8b); text: the installed paths that change, a line each |
 | `deploy.approve` | `deploy/approve/<unit>` | one of the unit's approver keys | `from`, `request <id>`, `unit`, `env`, `commit`, `bundle`, `expires` |
 | `deploy.decline` | `deploy/approve/<unit>` | an approver key | `from`, `request <id>`; text: why |
-| `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
+| `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`, `layout field` (a field unit only, 8b), `approval <id>`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
 | `deploy.refused` | `deploy/<unit>` | the host's runner | `from`, `request`; text: the reason |
 
 - `deploy.request` has no parents and a `link blob <sha256> <size>
@@ -365,27 +365,58 @@ A unit whose root copy says `layout = "field"` (ticket 0064, doc
   serve one path. The repo's `deploy/<unit>.toml` says `layout = "field"`
   too, so deploy-request takes `public/...` as its installed paths; the
   root copy decides.
+- **The request's file list.** A field unit's `deploy.request` carries
+  `files <sha256>`: the sha256 of the text `<sha256> <path>\n` per file,
+  in path order. That is exactly the text its `deploy.done` will list. The
+  approval names the request by id, so it signs this list too; the bundle's
+  sha256 alone isn't enough, since web.wisp can't open a tar.
 - **Install.** The runner checks the bundle as a versioned one's (the
   approved sha256, regular files, normalized relative paths, each once,
-  each the unit's) and each file at most 512 KB, then puts each file into
-  its node as a blob (`put-blob`, SPEC-node 8.10). It writes nothing on the
-  host and restarts nothing.
+  each the unit's) and each file at most 512 KB. It refuses a request with
+  no `files`, and one whose members, as `<sha256> <name>\n` in tar order,
+  don't hash to it. Then it puts each file into its node as a blob
+  (`put-blob`, SPEC-node 8.10). It writes nothing on the host and restarts
+  nothing.
 - **Done.** `deploy.done` is as for any unit, `<sha256> <path>` per file,
-  with one more header, `layout field`. That event is the switch: web.wisp
-  serves each path from the blob named by the newest `layout field`
-  `deploy.done` of its unit (by `version`), and only from a `deploy.done`
-  whose author is a current key of the host's runner identity
-  (`runner.server3`). A newer `deploy.done` without `layout field` takes the
-  unit's paths back to the host's files.
+  with the header `layout field`, and `approval <id>` (which every
+  `deploy.done` carries). That event is the switch: web.wisp serves each
+  path from the blob named by the newest accepted `layout field`
+  `deploy.done` of its unit (by `version`). A newer `deploy.done` without
+  `layout field` takes the unit's paths back to the host's files.
+- **What web.wisp accepts** (the 0130 follow-up, 2026-11-19; lux, beck,
+  ada; site/field-site.wisp). The runner's key is an identity a registrar
+  can add keys to, so a `layout field` `deploy.done` is taken only if all
+  of these hold:
+  - its author is a current key of the host's runner (`runner.server3`);
+  - its `approval` is a `deploy.approve` in `deploy/approve/<unit>`, signed
+    by a key the approvers copy lists for that unit;
+  - the approval names the done's `request` and copies that request's
+    `unit`, `env`, `commit` and `bundle`;
+  - the request is a `deploy.request` in `deploy/<unit>` with the done's
+    `unit`, `env` and `version`, and the done's text hashes to its `files`;
+  - no approver the copy lists has declined the request;
+  - every path is one the copy lists for the unit.
+  A decline of the request a unit is serving takes that unit back to the
+  host's files.
+- **The approvers copy.** At each pass the host's runner (root) writes
+  `field-deploy/approvers` under the daemon's fs root, from its own unit
+  list: `<unit> key <hex>` and `<unit> path public/<p>` lines, field units
+  only, mode 644 in a root-owned directory, replaced whole. A refused unit
+  list writes an empty copy, and any failure removes the copy. No copy, no
+  field units served. The desktop preview (site/preview.wisp) shows what
+  would serve, so it trusts the runner's key alone.
 - **Rollback** is a rollback request as in 6: its files are already blobs,
   so the runner puts nothing new, and its `deploy.done` makes the older
   version the served one.
-- **The limit, for now** (lux): web.wisp trusts a `deploy.done` signed by
-  the runner's identity, not the approval itself, and under F3/F4 another
-  key can be added to that identity or used from the daemon. So the root
-  copy refuses `layout = "field"` for a unit whose approvers include a
-  phone key, until web.wisp checks the `deploy.approve` against a
-  read-only copy of the root copy's approvers.
+- **Limits.** A forged runner key can still withhold a deploy, take a unit
+  back to the host's files, or replay a `deploy.done` for a request that
+  was approved but refused; it can't serve bytes no approver signed, or a
+  version nobody approved. The copy is out of reach of field events and
+  registrars, not of the daemon: `fs/` is the daemon user's, so it could
+  rename the directory away (lux). That is inside F3, since a service in
+  that daemon could change web.wisp itself. The root copy still refuses
+  `layout = "field"` for a phone-only unit (`approve`), which keeps the key
+  page on disk.
 
 ## 8a. Pages
 
