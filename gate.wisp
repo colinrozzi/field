@@ -100,13 +100,20 @@
                         (if (< 0 (string-len rest)) (tcp-send local rest) 0))
                       "joined")))))))))))
 
+  ; pass bytes from cid to the other end o; if that fails, close both, so
+  ; neither end waits for bytes that were never passed on (lux, 11-20)
+  (define relay (lambda (cid o bytes tag)
+    (match (tcp-send o bytes)
+      ((ok x) tag)
+      ((err why) (begin (forget cid) (forget o) (tcp-close o) (tcp-close cid) (string-append "relay failed: " why))))))
+
   (define gate-data (lambda (me store-addr e)
     (let (cid (car e))
       (let (bytes (bytes->string (car (cdr e))))
         (let (st (state cid))
           (if (string=? st "tls") (challenge me cid)
-          (if (has-prefix st "up ") (begin (tcp-send (after-prefix st "up ") bytes) "up")
-            (if (has-prefix st "down ") (begin (tcp-send (after-prefix st "down ") bytes) "down")
+          (if (has-prefix st "up ") (relay cid (after-prefix st "up ") bytes "up")
+            (if (has-prefix st "down ") (relay cid (after-prefix st "down ") bytes "down")
               (if (has-prefix st "nonce ")
                 ; "nonce <n>" then, if a hello arrived in pieces, "\n<so far>"
                 (let (rest (after-prefix st "nonce "))

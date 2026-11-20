@@ -262,21 +262,46 @@
   (define field-connection (lambda (cid)
     (begin (tcp-activate cid) (tcp-set-active cid "active") "connected")))
 
+  ; Each connection's unfinished request is kept in its conn file between
+  ; events, and SAVED holds the length last written, so a buffer that isn't
+  ; what was saved (a failed or short write, a read that fails) is caught. Then
+  ; the request can never complete: say so and close, so the client retries from
+  ; its cursor instead of waiting for a reply that can't come (the 11-20 stall:
+  ; a put-blob's buffer stuck at 96 KiB on server3, node-peer wedged; ilse).
+  (define SAVED (hash-map))
+  (define saved-len (lambda (cid) (match (map-get SAVED cid) ((some n) n) ((none) 0))))
+  ; SAVED -1 marks a connection closed that way: events already queued for it
+  ; are dropped, not taken as the start of a new request; on-close forgets it
+  (define not-saved (lambda (cid why)
+    (begin (tcp-send cid (err-reply (string-append "request not saved: " why)))
+           (tcp-close cid) (fs-delete (conn-path cid)) (map-set! SAVED cid -1)
+           (string-append "not saved: " why))))
+  ; the saved part of cid's request, or (err why) if it isn't what was saved
+  (define saved-buf (lambda (cid)
+    (let (want (saved-len cid))
+      (match (fs-read-text (conn-path cid))
+        ((ok t) (if (= (string-len t) want) (ok t)
+                  (err (string-append "the buffer is " (num->str (string-len t)) " bytes, not " (num->str want)))))
+        ((err x) (if (= want 0) (ok "") (err x)))))))
+
   (define field-data (lambda (store e)
     (let (cid (car e))
-      (let (buf (string-append
-                  (match (fs-read-text (conn-path cid)) ((ok t) t) ((err x) ""))
-                  (bytes->string (car (cdr e)))))
-        (let (left (drain store cid buf))
-          (if (< (limit-for left) (string-len left))
-            (begin (tcp-send cid (err-reply "request too large")) (tcp-close cid)
-                   (fs-delete (conn-path cid)) "too large")
-            (begin
-              (if (string=? left "") (fs-delete (conn-path cid)) (fs-write (conn-path cid) left))
-              "data")))))))
+      (if (= (saved-len cid) -1) "dropped: closed, request not saved"
+      (match (saved-buf cid)
+        ((err why) (not-saved cid why))
+        ((ok old)
+          (let (left (drain store cid (string-append old (bytes->string (car (cdr e))))))
+            (if (< (limit-for left) (string-len left))
+              (begin (tcp-send cid (err-reply "request too large")) (tcp-close cid)
+                     (fs-delete (conn-path cid)) (map-delete! SAVED cid) "too large")
+              (if (string=? left "")
+                (begin (fs-delete (conn-path cid)) (map-delete! SAVED cid) "data")
+                (match (fs-write (conn-path cid) left)
+                  ((ok x) (begin (map-set! SAVED cid (string-len left)) "data"))
+                  ((err why) (not-saved cid why))))))))))))
 
   (define field-closed (lambda (e)
-    (begin (fs-delete (conn-path (car e))) (unwatch (car e)) "closed")))
+    (begin (fs-delete (conn-path (car e))) (map-delete! SAVED (car e)) (unwatch (car e)) "closed")))
 
   (define clear-conns (lambda (es i)
     (if (>= i (length es)) "cleared"
