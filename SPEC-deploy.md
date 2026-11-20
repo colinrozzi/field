@@ -315,11 +315,12 @@ the conditions below hold. Policy by lux, decided by tova the same day.
    automatic.
 2. `load_units` refuses `auto = true` for a unit that holds a path under
    `/etc/`, `bin/`, `keys/` or `secrets/`, for `approve`, for the daemon
-   config and the binary, and for the `field` unit (the field rules file,
-   the gate keys, and the node services that carry the deploy path itself). The rules decide who
+   config and the binary, and for the units that hold trust settings rather
+   than code: `field-trust` (the field rules file and the gate keys, split
+   out of `field`) and `secret` (private's `bin/secret`, split out of
+   `private`). `field` itself, the node services, may be automatic. The rules decide who
    may write approvals and every other scope, so changing them stays a
-   person's signature. private's `bin/secret` is therefore its own unit, not
-   automatic.
+   person's signature.
 3. An automatic approval covers exactly one request that the deploy workflow
    built from a merge commit on the repo's default branch, whose files came
    through a reviewed `lib/pr` merge (never a direct push), whose commit has a
@@ -341,7 +342,9 @@ automatic approval. The list comes from the root copy (`trust_paths` in
 units.toml), so the merge it guards cannot edit it: at least
 `lib/deploy_trust.py`, `lib/deploy-runner`, `lib/deploy-request`, the modules
 the runner loads (`lib/runner`, `lib/run`, `lib/chat`), `lib/actions-runner`,
-`lib/grant.wisp`, `lib/supervisor*.wisp`, every `lib/*-install` and
+`lib/grant.wisp`, `lib/supervisor*.wisp`, `site/field-site.wisp` and
+`site/web.wisp` (web's verifier for field units and its serving fallback, so
+no merge can deploy a weaker check of itself), every `lib/*-install` and
 `site/server3/*-install`, `site/server3/field-deploy/`, `deploy/*.toml`, the
 `.actions/` workflows, `field/rules` and the gate keys.
 
