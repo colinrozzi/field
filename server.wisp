@@ -42,7 +42,7 @@
 ; still follows from its own cursor, so a lost one costs nothing. Bytes so far wait in field/conn/<cid>, as a request can
 ; arrive in pieces.
 (module server
-  (provide field-connection field-data field-closed field-serve)
+  (provide field-connection field-data field-closed field-serve field-tick)
   (require store "experiment/field/store.wisp")
 
   (define MAX-REQUEST 20000)
@@ -270,11 +270,18 @@
   ; a put-blob's buffer stuck at 96 KiB on server3, node-peer wedged; ilse).
   (define SAVED (hash-map))
   (define saved-len (lambda (cid) (match (map-get SAVED cid) ((some n) n) ((none) 0))))
+  ; GREW: when each unfinished request last grew (seconds). One that hasn't
+  ; for IDLE-S is closed the same way, so a request whose bytes never reach this
+  ; handler (an event lost on the way, which SAVED can't see) doesn't hold its
+  ; client either (lux, 11-20). field-tick checks every 30 s.
+  (define IDLE-S 120)
+  (define GREW (hash-map))
+  (define now-s (lambda () (s32 (/ (now) 1000u64))))
   ; SAVED -1 marks a connection closed that way: events already queued for it
   ; are dropped, not taken as the start of a new request; on-close forgets it
   (define not-saved (lambda (cid why)
     (begin (tcp-send cid (err-reply (string-append "request not saved: " why)))
-           (tcp-close cid) (fs-delete (conn-path cid)) (map-set! SAVED cid -1)
+           (tcp-close cid) (fs-delete (conn-path cid)) (map-set! SAVED cid -1) (map-delete! GREW cid)
            (string-append "not saved: " why))))
   ; the saved part of cid's request, or (err why) if it isn't what was saved
   (define saved-buf (lambda (cid)
@@ -293,15 +300,27 @@
           (let (left (drain store cid (string-append old (bytes->string (car (cdr e))))))
             (if (< (limit-for left) (string-len left))
               (begin (tcp-send cid (err-reply "request too large")) (tcp-close cid)
-                     (fs-delete (conn-path cid)) (map-delete! SAVED cid) "too large")
+                     (fs-delete (conn-path cid)) (map-delete! SAVED cid) (map-delete! GREW cid) "too large")
               (if (string=? left "")
-                (begin (fs-delete (conn-path cid)) (map-delete! SAVED cid) "data")
+                (begin (fs-delete (conn-path cid)) (map-delete! SAVED cid) (map-delete! GREW cid) "data")
                 (match (fs-write (conn-path cid) left)
-                  ((ok x) (begin (map-set! SAVED cid (string-len left)) "data"))
+                  ((ok x) (begin (map-set! SAVED cid (string-len left)) (map-set! GREW cid (now-s)) "data"))
                   ((err why) (not-saved cid why))))))))))))
 
   (define field-closed (lambda (e)
-    (begin (fs-delete (conn-path (car e))) (map-delete! SAVED (car e)) (unwatch (car e)) "closed")))
+    (begin (fs-delete (conn-path (car e))) (map-delete! SAVED (car e)) (map-delete! GREW (car e)) (unwatch (car e)) "closed")))
+
+  ; (field-tick name), from the serving file's on-tick: close every request
+  ; that hasn't grown for IDLE-S
+  (define field-tick (lambda (name)
+    (if (string=? name "field-idle") (sweep-idle (map-keys GREW) (now-s)) "other")))
+  (define sweep-idle (lambda (ks t)
+    (if (null? ks) "swept"
+      (begin
+        (match (map-get GREW (car ks))
+          ((some g) (if (< IDLE-S (- t g)) (not-saved (car ks) (string-append "no bytes for " (num->str (- t g)) " s")) 0))
+          ((none) 0))
+        (sweep-idle (cdr ks) t)))))
 
   (define clear-conns (lambda (es i)
     (if (>= i (length es)) "cleared"
@@ -317,5 +336,6 @@
       (fs-mkdir "field/conn")
       (match (fs-list "field/conn") ((ok es) (clear-conns es 0)) ((err e) "none"))
       (fs-write WATCHERS "")
+      (set-interval "field-idle" 30000)
       (tcp-listen addr))))
 )

@@ -6,4 +6,5 @@
 (define on-connection (lambda (cid) (field-connection cid)))
 (define on-data (lambda (e) (field-data STORE e)))
 (define on-close (lambda (e) (field-closed e)))
+(define on-tick (lambda (name) (field-tick name)))
 (field-serve STORE "127.0.0.1:7800")
