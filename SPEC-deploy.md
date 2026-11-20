@@ -303,6 +303,71 @@ nothing and refuses each approval with `stopped`. colin creates or removes
 it with one colin-run step; it needs no code change. Under choice (a) an
 agent that is root can remove it too.
 
+## 5c. Automatic approval
+
+colin's goal (2026-11-19): every merge to master deploys to server3 without a
+person in the loop. The runner on the desktop signs the approval itself when
+the conditions below hold. Policy by lux, decided by tova the same day.
+
+**What may be approved automatically**
+1. A unit is automatic only if the root copy says `auto = true`. The repo's
+   `deploy/<unit>.toml` never decides it, so a commit cannot make itself
+   automatic.
+2. `load_units` refuses `auto = true` for a unit that holds a path under
+   `/etc/`, `bin/`, `keys/` or `secrets/`, for `approve`, for the daemon
+   config and the binary, and for the units that hold trust settings rather
+   than code: `field-trust` (the field rules file and the gate keys, split
+   out of `field`) and `secret` (private's `bin/secret`, split out of
+   `private`). `field` itself, the node services, may be automatic. The rules decide who
+   may write approvals and every other scope, so changing them stays a
+   person's signature.
+3. An automatic approval covers exactly one request that the deploy workflow
+   built from a merge commit on the repo's default branch, whose files came
+   through a reviewed `lib/pr` merge (never a direct push), whose commit has a
+   passing `check.result` from the actions or checks key, and which passes
+   every runner check as for any approval (5.4, check 9 included). It never
+   signs a rollback, a downgrade, or anything `--downgrade` would be needed
+   for.
+
+**No health gating in step 1** (colin, 2026-11-19: "lets not worry about
+health checks ... if a service goes down its not the end of the world right
+now"). The runner installs and restarts each automatically approved unit in
+`after` order and posts what happened; it does not wait for one unit's check
+before the next, stop on a failure, or cap restarts. Owners watch their own
+services on the deploys page, and a failure is fixed forward or rolled back by
+hand (6). Health-checked deploys with rollback come with the supervisor (8).
+
+**Trust files.** A merge whose diff touches any trust path gets requests but no
+automatic approval. The list comes from the root copy (`trust_paths` in
+units.toml), so the merge it guards cannot edit it: at least
+`lib/deploy_trust.py`, `lib/deploy-runner`, `lib/deploy-request`, the modules
+the runner loads (`lib/runner`, `lib/run`, `lib/chat`), `lib/actions-runner`,
+`lib/grant.wisp`, `lib/supervisor*.wisp`, `site/field-site.wisp` and
+`site/web.wisp` (web's verifier for field units and its serving fallback, so
+no merge can deploy a weaker check of itself), every `lib/*-install` and
+`site/server3/*-install`, `site/server3/field-deploy/`, `deploy/*.toml`, the
+`.actions/` workflows, `field/rules` and the gate keys.
+
+**The residual risk, plainly**
+- The automatic approval is signed with tova's key, and every agent on the
+  desktop can sign as tova (F4). So "automatic" is as strong as the desktop:
+  the value is in the checks above, not in the key.
+- Until each server3 service runs with its own narrowed grant, they share one
+  daemon: every service holds every key in `keys/` (`id.colin`, `login`), can
+  run the secrets helper, can listen on any port, and shares one fs root, so
+  it can write the field rules file or another service's files directly
+  (F3). An automatic deploy of any unit can therefore reach everything, the
+  same as a manual deploy by tova today. What changes is the pause before it
+  goes out, not the review: the code is still reviewed in the PR.
+- So narrowed grants come first: one manifest per server3 service from
+  lib/grant.wisp, started through the boot list (wisp #146), signed by
+  colin's phone as a config change. After that an automatic deploy of, say,
+  reading can only reach what reading was granted. The supervisor (0156)
+  makes that the default for every service.
+- Excluding single units (point 2) does not add protection while the daemon
+  is shared; it keeps the units whose change is most dangerous on a person's
+  signature, so the protection exists once the grants narrow.
+
 ## 6. Rollback
 
 A rollback is a `deploy.request` with `rollback <version>`, naming the
