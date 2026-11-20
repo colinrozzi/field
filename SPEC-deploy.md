@@ -315,7 +315,8 @@ the conditions below hold. Policy by lux, decided by tova the same day.
    automatic.
 2. `load_units` refuses `auto = true` for a unit that holds a path under
    `/etc/`, `bin/`, `keys/` or `secrets/`, for `approve`, for the daemon
-   config and the binary, and for the field rules file. The rules decide who
+   config and the binary, and for the `field` unit (the field rules file,
+   the gate keys, and the node services that carry the deploy path itself). The rules decide who
    may write approvals and every other scope, so changing them stays a
    person's signature. private's `bin/secret` is therefore its own unit, not
    automatic.
@@ -327,21 +328,22 @@ the conditions below hold. Policy by lux, decided by tova the same day.
    signs a rollback, a downgrade, or anything `--downgrade` would be needed
    for.
 
-**Limits on what one merge restarts**
-4. The runner installs and restarts one unit at a time, in `after` order, and
-   moves to the next only after the current one's 10 s check passes.
-5. If any unit of a merge is refused, the rest of that merge's requests are
-   not approved automatically; they wait for a person, and the alert names
-   the merge.
-6. The node units (node, node-gate, node-chat, node-docs) carry the deploy
-   path itself. They go last in a merge, at most one per merge, and a failure
-   among them turns automatic approval off until a person looks.
-7. live and private, which carry colin's writes and login, go after the
-   static units and before node, so a failure there stops the chain first.
-8. Two automatic deploys refused within 24 hours turn automatic approval off
-   (a flag in the runner's root state, like STOP) until a person clears it.
-   At most one automatic deploy per unit per 10 minutes; the supersede rule
-   already skips older merges.
+**No health gating in step 1** (colin, 2026-11-19: "lets not worry about
+health checks ... if a service goes down its not the end of the world right
+now"). The runner installs and restarts each automatically approved unit in
+`after` order and posts what happened; it does not wait for one unit's check
+before the next, stop on a failure, or cap restarts. Owners watch their own
+services on the deploys page, and a failure is fixed forward or rolled back by
+hand (6). Health-checked deploys with rollback come with the supervisor (8).
+
+**Trust files.** A merge whose diff touches any trust path gets requests but no
+automatic approval. The list comes from the root copy (`trust_paths` in
+units.toml), so the merge it guards cannot edit it: at least
+`lib/deploy_trust.py`, `lib/deploy-runner`, `lib/deploy-request`, the modules
+the runner loads (`lib/runner`, `lib/run`, `lib/chat`), `lib/actions-runner`,
+`lib/grant.wisp`, `lib/supervisor*.wisp`, every `lib/*-install` and
+`site/server3/*-install`, `site/server3/field-deploy/`, `deploy/*.toml`, the
+`.actions/` workflows, `field/rules` and the gate keys.
 
 **The residual risk, plainly**
 - The automatic approval is signed with tova's key, and every agent on the
