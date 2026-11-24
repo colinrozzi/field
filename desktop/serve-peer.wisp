@@ -46,11 +46,18 @@
 (peer-watch IN GATE)
 (peer-watch OUT LOCAL)
 (set-interval "follow" 60000)
-; A receive that hears nothing for 2 minutes gives up (wisp #139), so a
+; A receive that hears nothing for 20 s gives up (wisp #139), so a
 ; half-open connection can't hold this session (it held it 5 h on 2026-11-17):
 ; the pull says it failed and the next tick tries again from the cursor. Only
-; on a daemon that has the verb (its tcp help names it).
+; on a daemon that has the verb (its tcp help names it). 20 s, not 2 minutes
+; (2026-11-24): theater's send doesn't flush, so the tail of a big put-blob
+; through the TLS gate can sit unsent until the connection closes, and the
+; node's reply then only comes after this timeout; the retry finds the blob
+; there. Until theater flushes, this bound is the wait. The timeout is the
+; whole daemon's (theater keeps it on state every actor shares), and nothing on
+; the desktop waits on a pull read anywhere near 20 s (the hub's one-line
+; replies, the supervisor's checks, the field clients).
 (define has-text (lambda (s p i)
   (if (< (string-len s) (+ i (string-len p))) 0
     (if (string=? (substring s i (+ i (string-len p))) p) 1 (has-text s p (+ i 1))))))
-(if (= (has-text (help "tcp") "tcp-set-read-timeout" 0) 1) (tcp-set-read-timeout 120000) "no read timeout on this daemon")
+(if (= (has-text (help "tcp") "tcp-set-read-timeout" 0) 1) (tcp-set-read-timeout 20000) "no read timeout on this daemon")
