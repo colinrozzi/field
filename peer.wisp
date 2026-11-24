@@ -59,7 +59,7 @@
 ; reached by request, never this session's own disk, so a pull with the ends
 ; swapped (the desktop's server3-push) carries blobs too (ticket 0137).
 (module peer
-  (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch peer-retry-refused)
+  (provide peer-request peer-pull peer-dial peer-state peer-watch peer-watching peer-unwatch peer-retry-refused peer-blobs-fast?)
   (require str "std/str.wisp")   ; u64->string
 
   (define PULLS 8)   ; pages per peer-pull call
@@ -226,10 +226,26 @@
       (let (why (fetch-blob remote local (car hs)))
         (begin
           (if (string=? why "") 0
-            (fs-write (blobs-why-path name) (string-append (u64->string (now)) " " (car hs) " " why "\n")))
+            (fs-write (blobs-why-path name) (string-append (u64->string (now)) " " (car hs) " "
+                                                     (if (< 200 (string-len why)) (substring why 0 200) why) "\n")))
           (fetch-blobs name remote local (cdr hs) (if (string=? why "") out (list-push out (car hs)))))))))
   (define push-all (lambda (xs ys) (if (null? ys) xs (push-all (list-push xs (car ys)) (cdr ys)))))
   (define join-lines (lambda (xs acc) (if (null? xs) acc (join-lines (cdr xs) (string-append acc (car xs) "\n")))))
+  ; whether a direction should retry its pending blobs soon -> 1 or 0: yes while
+  ; any is pending, for BLOBS-FAST tries after the pending list last changed
+  ; (.blobs-fast: "<sha256 of the list> <tries>"). A late bundle changes the
+  ; list and gets its fast retries; a link to a blob nobody has (anyone can
+  ; post one) stays unchanged, so it falls back to the minute tick (lux).
+  (define BLOBS-FAST 100)
+  (define peer-blobs-fast? (lambda (name)
+    (let (pend (match (fs-read-text (blobs-path name)) ((ok t) t) ((err e) "")))
+      (if (string=? pend "") (begin (fs-write (string-append "field/peers/" name ".blobs-fast") "") 0)
+        (let (h (sha256 pend))
+          (let (was (match (fs-read-text (string-append "field/peers/" name ".blobs-fast")) ((ok t) t) ((err e) "")))
+            (let (tries (if (and (< 65 (string-len was)) (string=? (substring was 0 64) h)) (digits-from was 65 0) 0))
+              (begin
+                (fs-write (string-append "field/peers/" name ".blobs-fast") (string-append h " " (num->str (+ tries 1))))
+                (if (< tries BLOBS-FAST) 1 0)))))))))
   ; try the pending ones again, plus hs -> nothing; what is still missing stays pending
   (define settle-blobs (lambda (name remote local hs)
     (let (pend (split-from (match (fs-read-text (blobs-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list)))
