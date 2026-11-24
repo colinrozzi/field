@@ -31,6 +31,8 @@
 ;   field/peers/<name>.watch   the open watch connection's id, or nothing
 ;   field/peers/<name>.blobs   blobs (sha256 lines) an admitted event links that
 ;                              could not be fetched yet; tried again each pull
+;   field/peers/<name>.blobs-why  the newest failure to copy one: "<ms> <sha256>
+;                              <step>: <reason>"
 ;   field/peers/<name>.refused events the local node refused (the 11-17 stall,
 ;                              SPEC-node 9.5): "<id> <transient|final> <tries>
 ;                              <next> <first> <reason>" lines, times in seconds.
@@ -202,22 +204,30 @@
                 (let (w (split-from l b-space 0 (list))) (if (< 2 (length w)) (list-push acc (list-get w 2)) acc))
                 acc))))))))
   (define blobs-path (lambda (name) (string-append "field/peers/" name ".blobs")))
-  ; copy one blob from remote to local unless local has it -> 1 when local
-  ; has it after
+  ; the newest failure to copy a blob: "<ms> <sha256> <step>: <reason>", so a
+  ; late bundle says which request failed and how (a 2-minute wait on 11-24
+  ; looked like the read timeout, but nothing recorded it)
+  (define blobs-why-path (lambda (name) (string-append "field/peers/" name ".blobs-why")))
+  ; copy one blob from remote to local unless local has it -> "" when local
+  ; has it after, else which step failed and why
   (define fetch-blob (lambda (remote local h)
     (let (have (peer-request local (string-append "has-blob " h "\n")))
-      (if (and (= (list-get have 0) 1) (string=? (list-get have 1) "1")) 1
+      (if (and (= (list-get have 0) 1) (string=? (list-get have 1) "1")) ""
         (let (r (peer-request remote (string-append "blob " h "\n")))
-          (if (= (list-get r 0) 0) 0
+          (if (= (list-get r 0) 0) (string-append "blob: " (list-get r 1))
             (let (b (list-get r 1))
               (if (string=? (sha256 b) h)
                 (let (p (peer-request local (string-append "put-blob " h " " (num->str (string-len b)) "\n" b)))
-                  (if (and (= (list-get p 0) 1) (string=? (list-get p 1) h)) 1 0))
-                0))))))))
-  ; copy each of hs; -> the ones still missing
-  (define fetch-blobs (lambda (remote local hs out)
+                  (if (and (= (list-get p 0) 1) (string=? (list-get p 1) h)) "" (string-append "put-blob: " (list-get p 1))))
+                "blob: its sha256 isn't its name"))))))))
+  ; copy each of hs; -> the ones still missing, the newest failure written down
+  (define fetch-blobs (lambda (name remote local hs out)
     (if (null? hs) out
-      (fetch-blobs remote local (cdr hs) (if (= (fetch-blob remote local (car hs)) 1) out (list-push out (car hs)))))))
+      (let (why (fetch-blob remote local (car hs)))
+        (begin
+          (if (string=? why "") 0
+            (fs-write (blobs-why-path name) (string-append (u64->string (now)) " " (car hs) " " why "\n")))
+          (fetch-blobs name remote local (cdr hs) (if (string=? why "") out (list-push out (car hs)))))))))
   (define push-all (lambda (xs ys) (if (null? ys) xs (push-all (list-push xs (car ys)) (cdr ys)))))
   (define join-lines (lambda (xs acc) (if (null? xs) acc (join-lines (cdr xs) (string-append acc (car xs) "\n")))))
   ; try the pending ones again, plus hs -> nothing; what is still missing stays pending
@@ -225,7 +235,7 @@
     (let (pend (split-from (match (fs-read-text (blobs-path name)) ((ok t) t) ((err e) "")) b-nl 0 (list)))
       (let (all (push-all pend hs))
         (if (null? all) "none"
-          (fs-write (blobs-path name) (join-lines (fetch-blobs remote local all (list)) "")))))))
+          (fs-write (blobs-path name) (join-lines (fetch-blobs name remote local all (list)) "")))))))
 
   ; ── refusals ──────────────────────────────────────────────────────────
   (define refused-path (lambda (name) (string-append "field/peers/" name ".refused")))
