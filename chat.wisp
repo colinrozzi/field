@@ -74,7 +74,7 @@
                     "check.start" "check.result" "pr.approve" "pr.decline" "pr.dismiss" "system.ask" "system.answer"
                     "action.job" "action.start" "action.result" "action.rerun"
                     "deploy.request" "deploy.done" "deploy.refused" "release.request" "release.refused"
-                    "sm.new" "session.follow" "session.unfollow") string=?)))
+                    "sm.new" "session.follow" "session.unfollow" "ticket.set") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
@@ -89,7 +89,9 @@
                     (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "action.")) "actions/"
                       (if (and (< 7 (string-len k)) (string=? (substring k 0 7) "deploy.")) "deploy/"
                         (if (or (string=? k "release.request") (string=? k "release.refused")) "release/"
-                          (if (or (string=? k "sm.new") (or (string=? k "session.follow") (string=? k "session.unfollow"))) "sm/session/" ""))))))))))))))))
+                          (if (string=? k "sm.new") "sm/"
+                            (if (or (string=? k "session.follow") (string=? k "session.unfollow")) "sm/session/"
+                              (if (string=? k "ticket.set") "sm/ticket/" ""))))))))))))))))))
   ; id.* and git.push are signed by this node's own key. The rest by the
   ; key of the body's `from`, id.<from> (field/SPEC-id.md 5), or "" if this
   ; daemon holds none: the chat keys stopped at rules step C.
@@ -119,9 +121,16 @@
       (if (< j 0) -1
         (if (< (string-len s) (+ j (string-len pat))) -1
           (if (string=? (substring s j (+ j (string-len pat))) pat) j (find-sub s pat (+ j 1))))))))
-  ; t is sm/session/ then exactly 64 lowercase hex (a minted machine id) -> 1
-  (define sm-scope-ok? (lambda (t)
-    (if (not (= (string-len t) 75)) 0 (hex64? t 11))))
+  ; a minted machine's kinds (doc machines 5, doc/ticket-machine)
+  (define sm-kind? (lambda (k) (if (string=? k "sm.new") 1 (if (string=? k "ticket.set") 1 (if (string=? (scope-for k) "sm/session/") 1 0)))))
+  ; t is prefix p then exactly 64 lowercase hex (a minted machine id) -> 1
+  (define sm-under? (lambda (t p)
+    (if (not (= (string-len t) (+ (string-len p) 64))) 0 (if (= (in-scope? t p) 0) 0 (hex64? t (string-len p))))))
+  ; t is a right scope for kind: a genesis in sm/session/ or sm/ticket/, a
+  ; step only in its own machine's -> 1
+  (define sm-scope-ok? (lambda (t kind)
+    (if (string=? kind "sm.new") (if (= (sm-under? t "sm/session/") 1) 1 (sm-under? t "sm/ticket/"))
+      (sm-under? t (scope-for kind)))))
   (define hex64? (lambda (t i)
     (if (>= i (string-len t)) 1
       (let (c (string-ref t i))
@@ -172,11 +181,11 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow or session.unfollow")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow, session.unfollow or ticket.set")
                   (if (or (= (in-scope? thread "run/approve/") 1) (or (= (in-scope? thread "deploy/approve/") 1) (= (in-scope? thread "release/approve/") 1))) (reply "err" "run/approve/, deploy/approve/ and release/approve/ take only events signed with an approver key")
                   (if (or (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
-                          (and (string=? (scope-for kind) "sm/session/") (= (sm-scope-ok? thread) 0)))
-                    (reply "err" (string-append kind " goes in " (scope-for kind) (if (string=? (scope-for kind) "sm/session/") "<64 lowercase hex>" "<name>")))
+                          (and (= (sm-kind? kind) 1) (= (sm-scope-ok? thread kind) 0)))
+                    (reply "err" (string-append kind " goes in " (if (string=? kind "sm.new") "sm/session/ or sm/ticket/" (scope-for kind)) (if (= (sm-kind? kind) 1) "<64 lowercase hex>" "<name>")))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
                     (if (string=? (signer kind (substring p (+ k 1) (string-len p))) "")
                       (reply "err" (string-append "no key for from " (from-of (substring p (+ k 1) (string-len p))) " on this daemon (lib/chat ME id-new NAME)"))
