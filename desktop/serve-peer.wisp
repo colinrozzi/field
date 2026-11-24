@@ -15,12 +15,12 @@
 (define WANTS (list))
 (define SENDS (list))
 ; Each direction pulls until caught up; while there is more, its catchup timer
-; keeps going. While a blob it admitted an event for couldn't be copied (its
-; .blobs file isn't empty), its blobs timer pulls again every 3 s, so a
-; deploy's bundle doesn't wait for the next event or the minute tick (11-24:
-; pages v41 waited 2 minutes for its bundle; the reason is in .blobs-why).
-(define pending? (lambda (name)
-  (match (fs-read-text (string-append "field/peers/" name ".blobs")) ((ok t) (if (string=? t "") 0 1)) ((err e) 0))))
+; keeps going. While a blob it admitted an event for couldn't be copied, its
+; blobs timer pulls again every 3 s, for a while after the pending list last
+; changed (peer-blobs-fast?), so a deploy's bundle doesn't wait for the next
+; event or the minute tick (11-24: pages v41 waited 2 minutes for its bundle;
+; the reason is in .blobs-why), and a link to a blob nobody has costs nothing.
+(define pending? (lambda (name) (peer-blobs-fast? name)))
 (define pull-in (lambda ()
   (let (r (peer-pull IN GATE LOCAL WANTS))
     (begin (if (string=? r "more") (set-interval "catchup-in" 50) (clear-interval "catchup-in"))
