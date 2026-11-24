@@ -15,13 +15,20 @@
 (define WANTS (list))
 (define SENDS (list))
 ; Each direction pulls until caught up; while there is more, its catchup timer
-; keeps going.
+; keeps going. While a blob it admitted an event for couldn't be copied (its
+; .blobs file isn't empty), its blobs timer pulls again every 3 s, so a
+; deploy's bundle doesn't wait for the next event or the minute tick (11-24:
+; pages v41 waited 2 minutes for its bundle; the reason is in .blobs-why).
+(define pending? (lambda (name)
+  (match (fs-read-text (string-append "field/peers/" name ".blobs")) ((ok t) (if (string=? t "") 0 1)) ((err e) 0))))
 (define pull-in (lambda ()
   (let (r (peer-pull IN GATE LOCAL WANTS))
-    (begin (if (string=? r "more") (set-interval "catchup-in" 50) (clear-interval "catchup-in")) r))))
+    (begin (if (string=? r "more") (set-interval "catchup-in" 50) (clear-interval "catchup-in"))
+           (if (= (pending? IN) 1) (set-interval "blobs-in" 3000) (clear-interval "blobs-in")) r))))
 (define pull-out (lambda ()
   (let (r (peer-pull OUT LOCAL GATE SENDS))
-    (begin (if (string=? r "more") (set-interval "catchup-out" 50) (clear-interval "catchup-out")) r))))
+    (begin (if (string=? r "more") (set-interval "catchup-out" 50) (clear-interval "catchup-out"))
+           (if (= (pending? OUT) 1) (set-interval "blobs-out" 3000) (clear-interval "blobs-out")) r))))
 ; Woken by watches: on server3's store (something new there) and on ours.
 (peer-unwatch IN)
 (peer-unwatch OUT)
@@ -33,8 +40,8 @@
     (if (string=? (car e) (peer-watching OUT)) (peer-unwatch OUT) "other"))))
 ; the minute tick is the backstop, and re-opens a watch that closed
 (define on-tick (lambda (name)
-  (if (string=? name "catchup-in") (pull-in)
-    (if (string=? name "catchup-out") (pull-out)
+  (if (or (string=? name "catchup-in") (string=? name "blobs-in")) (pull-in)
+    (if (or (string=? name "catchup-out") (string=? name "blobs-out")) (pull-out)
       (begin (peer-watch IN GATE) (peer-watch OUT LOCAL) (pull-in) (pull-out))))))
 (peer-watch IN GATE)
 (peer-watch OUT LOCAL)
