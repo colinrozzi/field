@@ -44,7 +44,10 @@ systemctl reload caddy
 - **The command is the rest of the body, byte for byte**, after the first
   blank line. It is what the runner gives `bash -c`: no trailing newline is
   added or removed. It MUST NOT be empty and MAY be at most 8192 bytes.
-- No parents.
+- At most one parent: the event it grew from (its `cause`, a message or a
+  ticket), when that event is in a scope every holder of run/ also holds, so
+  never one in private/ (ticket 0184; DESIGN.md Scopes). The parent proves
+  order only: the runner checks the approval, never the proposal's parent.
 
 ### 1.2 `run.approve`
 

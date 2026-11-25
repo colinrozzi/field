@@ -115,7 +115,9 @@ A bundle is a tar of the unit's files **at one commit**:
 | `deploy.done` | `deploy/<unit>` | the host's runner (`runner.<host>`) | `from`, `request`, `unit`, `env`, `commit`, `bundle`, `version`, `layout field` (a field unit only, 8b), `approval <id>`; text: `<sha256> <path>` per installed file, then `service <name> up` per restarted service |
 | `deploy.refused` | `deploy/<unit>` | the host's runner | `from`, `request`; text: the reason |
 
-- `deploy.request` has no parents and a `link blob <sha256> <size>
+- `deploy.request` has at most one parent, the `git.push` it grew from (its
+  `cause`; ticket 0184), for order only: the runner checks the approval's and
+  done's parents, never the request's. It has a `link blob <sha256> <size>
   application/x-tar`. `expires` is its time plus 24 hours unless the
   workflow says otherwise. `version` is one more than the highest version
   of the unit's `deploy.done` events for that env (1 for the first): it
