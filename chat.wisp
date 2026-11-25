@@ -74,7 +74,7 @@
                     "check.start" "check.result" "pr.approve" "pr.decline" "pr.dismiss" "system.ask" "system.answer"
                     "action.job" "action.start" "action.result" "action.rerun"
                     "deploy.request" "deploy.done" "deploy.refused" "release.request" "release.refused"
-                    "sm.new" "session.follow" "session.unfollow" "ticket.set") string=?)))
+                    "sm.new" "session.follow" "session.unfollow" "ticket.set" "ref.set") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
@@ -91,7 +91,7 @@
                         (if (or (string=? k "release.request") (string=? k "release.refused")) "release/"
                           (if (string=? k "sm.new") "sm/"
                             (if (or (string=? k "session.follow") (string=? k "session.unfollow")) "sm/session/"
-                              (if (string=? k "ticket.set") "sm/ticket/" ""))))))))))))))))))
+                              (if (string=? k "ticket.set") "sm/ticket/" (if (string=? k "ref.set") "ref/" "")))))))))))))))))))
   ; id.* and git.push are signed by this node's own key. The rest by the
   ; key of the body's `from`, id.<from> (field/SPEC-id.md 5), or "" if this
   ; daemon holds none: the chat keys stopped at rules step C.
@@ -181,11 +181,13 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow, session.unfollow or ticket.set")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow, session.unfollow, ticket.set or ref.set")
                   (if (or (= (in-scope? thread "run/approve/") 1) (or (= (in-scope? thread "deploy/approve/") 1) (= (in-scope? thread "release/approve/") 1))) (reply "err" "run/approve/, deploy/approve/ and release/approve/ take only events signed with an approver key")
                   (if (or (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
-                          (and (= (sm-kind? kind) 1) (= (sm-scope-ok? thread kind) 0)))
-                    (reply "err" (string-append kind " goes in " (if (string=? kind "sm.new") "sm/session/ or sm/ticket/" (scope-for kind)) (if (= (sm-kind? kind) 1) "<64 lowercase hex>" "<name>")))
+                          (or (and (= (sm-kind? kind) 1) (= (sm-scope-ok? thread kind) 0))
+                              ; a ref goes only in its author's own ref/<from> (refs, 0183); readers check it too
+                              (and (string=? kind "ref.set") (not (string=? thread (string-append "ref/" (from-of (substring p (+ k 1) (string-len p)))))))))
+                    (reply "err" (string-append kind " goes in " (if (string=? kind "sm.new") "sm/session/ or sm/ticket/" (if (string=? kind "ref.set") "ref/<its from>" (scope-for kind))) (if (= (sm-kind? kind) 1) "<64 lowercase hex>" (if (string=? kind "ref.set") "" "<name>"))))
                     (if (< MAX-BODY (- (string-len p) (+ k 1))) (reply "err" "body over 16384 bytes")
                     (if (string=? (signer kind (substring p (+ k 1) (string-len p))) "")
                       (reply "err" (string-append "no key for from " (from-of (substring p (+ k 1) (string-len p))) " on this daemon (lib/chat ME id-new NAME)"))
