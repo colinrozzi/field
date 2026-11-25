@@ -30,6 +30,7 @@ actions/ id
 deploy/ id
 sm/session/ id
 sm/ticket/ id
+ref/ id
 deploy/approve/ none
 deploy/approve/transit 1908c021edbb19d46c8474cac5cd50731a097a822628c26345491b70ec514082
 deploy/approve/pages 1908c021edbb19d46c8474cac5cd50731a097a822628c26345491b70ec514082
