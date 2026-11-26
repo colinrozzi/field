@@ -288,6 +288,12 @@
         (filter (lambda (r) (= (string-len (nth r 0)) best)) ms)))))
   (define registrars (lambda (scope) (map (lambda (r) (nth r 1)) (filter (lambda (r) (= (length r) 2)) (best-rules scope)))))
   (define id-scope? (lambda (scope) (starts-with scope "id/")))
+  ; A protected name (0195): one whose best id/ rule is its own id/<name> line. Only
+  ; that line's keys write id/<name> then, adding or retiring: not the name's own keys
+  ; (which agents can reach in a shared daemon) and not the general id/ registrars.
+  (define protected? (lambda (scope)
+    (let (rs (best-rules scope)) (if (null? rs) 0 (if (string=? (nth (car rs) 0) scope) 1 0)))))
+  (define in-list? (lambda (x xs) (if (null? xs) 0 (if (string=? x (car xs)) 1 (in-list? x (cdr xs))))))
   (define admits (lambda (r e)
     (let (who (nth r 1))
       (if (= (length r) 4)
@@ -300,7 +306,8 @@
       (let (rs (best-rules (event-scope e)))
         (if (null? rs) 0
           (if (= (id-scope? (event-scope e)) 1)
-            (id-may-write IDS (substring (event-scope e) 3 (string-len (event-scope e))) (event-author e) (registrars (event-scope e)))
+            (if (= (protected? (event-scope e)) 1) (in-list? (event-author e) (registrars (event-scope e)))
+              (id-may-write IDS (substring (event-scope e) 3 (string-len (event-scope e))) (event-author e) (registrars (event-scope e))))
             (if (null? (filter (lambda (r) (admits r e)) rs)) 0 1)))))))
 
   ; the parents in ps we do not hold, in order (a tail loop: 0088)
