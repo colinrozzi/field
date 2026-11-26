@@ -74,7 +74,7 @@
                     "check.start" "check.result" "pr.approve" "pr.decline" "pr.dismiss" "system.ask" "system.answer"
                     "action.job" "action.start" "action.result" "action.rerun"
                     "deploy.request" "deploy.done" "deploy.refused" "release.request" "release.refused"
-                    "sm.new" "session.follow" "session.unfollow" "ticket.set" "ref.set" "pr.set") string=?)))
+                    "sm.new" "session.follow" "session.unfollow" "ticket.set" "ref.set" "pr.set" "msg") string=?)))
 
   ; the scope prefix a kind outside chat/ needs ("" for a chat kind)
   (define scope-for (lambda (k)
@@ -116,6 +116,13 @@
               (let (pub (match (key-public (string-append "id." name)) ((ok p) p)
                           ((err e) (match (key-new (string-append "id." name)) ((ok p) p) ((err x) "")))))
                 (string-append (substring body 0 j) "\nkey " pub "\n" (substring body (+ j 9) (string-len body))))))))))
+  ; msg (0203): a message without a branch, only in chat/main, its headers (before the
+  ; first blank line) naming no in, branch or re; what it answers is its parent -> 1 if ok
+  (define msg-ok? (lambda (thread body)
+    (let (j (find-sub body "\n\n" 0))
+      (let (head (string-append "\n" (if (< j 0) body (substring body 0 j))))
+        (if (not (string=? thread "main")) 0
+          (if (or (<= 0 (find-sub head "\nin " 0)) (or (<= 0 (find-sub head "\nbranch " 0)) (<= 0 (find-sub head "\nre " 0)))) 0 1))))))
   (define find-sub (lambda (s pat i)
     (let (j (string-index s (string-ref pat 0) i))
       (if (< j 0) -1
@@ -181,8 +188,10 @@
             (let (thread (substring p 0 i))
               (let (kind (substring p (+ i 1) j))
                 (if (or (= i 0) (<= 0 (string-index thread b-space))) (reply "err" "bad thread name")
-                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow, session.unfollow, ticket.set, ref.set or pr.set")
+                  (if (not (kind-ok? kind)) (reply "err" "kind is chat.msg, chat.join, chat.leave, chat.branch, chat.set, chat.edit, mail.read, group.add, group.remove, group.open, doc.set, doc.edit, id.key, id.retire, git.push, run.propose, run.result, check.start, check.result, pr.approve, pr.decline, pr.dismiss, system.ask, system.answer, action.job, action.start, action.result, action.rerun, deploy.request, deploy.done, deploy.refused, release.request, release.refused, sm.new, session.follow, session.unfollow, ticket.set, ref.set, pr.set or msg")
                   (if (or (= (in-scope? thread "run/approve/") 1) (or (= (in-scope? thread "deploy/approve/") 1) (= (in-scope? thread "release/approve/") 1))) (reply "err" "run/approve/, deploy/approve/ and release/approve/ take only events signed with an approver key")
+                  (if (and (string=? kind "msg") (= (msg-ok? thread (substring p (+ k 1) (string-len p))) 0))
+                    (reply "err" "msg goes in main, with no in, branch or re header: what it answers is its parent (0203)")
                   (if (or (and (not (string=? (scope-for kind) "")) (= (in-scope? thread (scope-for kind)) 0))
                           (or (and (= (sm-kind? kind) 1) (= (sm-scope-ok? thread kind) 0))
                               ; a ref goes in its author's own ref/<from> (refs, 0183; readers check it too)
@@ -197,7 +206,7 @@
                                         (id-body kind thread (substring p (+ k 1) (string-len p)))
                                         (if (= with-parents 0) (list) (parent-list (substring p (+ j 1) k)))
                                         links))
-                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r)))))))))))))))))
+                      (if (= (string-len r) 64) (reply "ok" r) (reply "err" r))))))))))))))))))
 
   ; Handle every complete request in buf -> what's left.
   (define drain (lambda (cid buf)
