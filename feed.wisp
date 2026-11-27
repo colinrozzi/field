@@ -61,6 +61,7 @@
     (let (i (string-index line b-space))
       (let (j (if (< i 0) -1 (string-index line b-space (+ i 1))))
         (if (< j 0) "ignored"
+          (if (or (= (name-ok? (substring line 0 i) 0) 0) (not (state-ok? (substring line (+ i 1) j)))) "ignored"
           (let (name (substring line 0 i))
             (let (rest (substring line (+ j 1) (string-len line)))
               (let (k (string-index rest b-space))
@@ -73,7 +74,14 @@
                           (let (r (agent-post scope kind detail (if (string=? work "") prev work)))
                             (let (r2 (if (or (= (string-len r) 64) (string=? work "")) r (agent-post scope kind detail prev)))
                               (let (r3 (if (or (= (string-len r2) 64) (string=? prev "")) r2 (agent-post scope kind detail "")))
-                                (if (= (string-len r3) 64) (begin (map-set! LAST name r3) "posted") "ignored")))))))))))))))))
+                                (if (= (string-len r3) 64) (begin (map-set! LAST name r3) "posted") "ignored"))))))))))))))))))
+  ; any local process can write a line to the feed (lux): a plain name and a known state only
+  (define name-ok? (lambda (t i)
+    (if (>= i (string-len t)) (if (and (< 0 (string-len t)) (<= (string-len t) 64)) 1 0)
+      (let (c (string-ref t i))
+        (if (or (and (<= 97 c) (<= c 122)) (or (and (<= 48 c) (<= c 57)) (and (< 0 i) (or (= c 45) (or (= c 46) (= c 95))))))
+          (name-ok? t (+ i 1)) 0)))))
+  (define state-ok? (lambda (s) (member s (list "working" "idle" "waiting" "exited") string=?)))
   (define agent-post (lambda (scope kind body parent)
     (field-post-to FIELD "agents" scope kind body (if (string=? parent "") (list) (list parent)) (list))))
 
