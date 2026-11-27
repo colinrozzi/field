@@ -55,6 +55,14 @@
 
   ; an agent's newest status event, by name: its next one's parent when the hook names no work (0212)
   (define LAST (hash-map))
+  ; the newest event in scope sc from the store, reading its pages to the end (at most n), or "":
+  ; an agent's previous status after a restart, when LAST has forgotten it (tova, 15:59)
+  (define newest-in (lambda (sc cursor last n)
+    (if (= n 0) last
+      (let (r (field-scope-after FIELD cursor sc "agent."))
+        (let (es (list-get r 1))
+          (let (l2 (if (= (length es) 0) last (list-get (list-get es (- (length es) 1)) 1)))
+            (if (= (list-get r 2) 1) (newest-in sc (list-get r 0) l2 (- n 1)) l2)))))))
   ; the work each agent's newest status named, so the same work isn't a parent again (colin, 13:43)
   (define WORK (hash-map))
   (define hex64? (lambda (t i)
@@ -70,7 +78,7 @@
               (let (k (string-index rest b-space))
                 (let (work (if (and (starts-with rest "@") (= k 65) (= (hex64? (substring rest 1 65) 0) 1)) (substring rest 1 65) ""))
                   (let (detail (if (string=? work "") rest (substring rest 66 (string-len rest))))
-                    (let (prev (match (map-get LAST name) ((some v) v) ((none) "")))
+                    (let (prev (match (map-get LAST name) ((some v) v) ((none) (newest-in (string-append "agents/" name) "" "" 100))))
                       (let (scope (string-append "agents/" name))
                         (let (kind (string-append "agent." (substring line (+ i 1) j)))
                           ; the previous status first (a chain), plus the work when it's new; if the store
