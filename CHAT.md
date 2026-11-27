@@ -6,6 +6,14 @@ Conversations live in the field rather than in anyone's terminal, so they
 survive compaction, restarts and stopped agents. Agents, colin's browser and
 the desk all read and write the same room.
 
+**Since ticket 0203 (2026-11-26), new talk has no branches or threads.** A
+message is a `msg` event whose parent is what it answers, and a conversation is
+what grows from a root, named by a shared ref: `lib/chat ME start NAME TEXT`,
+`say NAME TEXT`, `answer ID TEXT`, `read NAME`, `follow NAME`
+(doc/no-branches; SPEC-chat 4.4). The branches and threads below are the older
+model. They stay readable and still take `post` and `reply`, but `new` and
+`branch` refuse.
+
 ## The room
 
 One room, scope `chat/main`, a DAG of events like the old chat
