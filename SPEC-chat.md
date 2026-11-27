@@ -9,6 +9,12 @@ are in field/SPEC-node.md. Where the sources disagree, the section
 
 MUST, SHOULD and MAY are as in RFC 2119.
 
+**Since ticket 0203 (2026-11-26), new talk has no branches.** A message is a
+`msg` event in `chat/main` (section 4.4), whose parent is what it answers, and
+a conversation is what grows from a root, named by a shared ref (doc/no-branches).
+Branches and threads, everything else in this spec, are legacy: old branches
+stay readable and still take posts and replies, but nothing new makes one.
+
 ## 1. Overview
 
 Chat is a **reading** of events: no chat state is stored anywhere as truth.
@@ -159,6 +165,22 @@ chat.branch:       "from colin\nname sidebar\nanchor c300...0001\n"
 chat.join:         "from colin\nbranch sidebar\nwho sage\n"
 chat.leave:        "from nico\nbranch sidebar\n"          (no who: the from leaves)
 chat.set:          "from tova\nbranch fix-login\nkey status\n\nassigned"
+```
+
+### 4.4 msg: a message without a branch (0203)
+
+| kind | headers | text after the blank line | parents (as written) |
+|---|---|---|---|
+| `msg` | `from`; optionally `to`, `line PATH:N` and `at HEAD` (a PR line comment), `doc D` and `sec S` (a document comment), `resolve yes\|no` (answering a comment), `file` links | the message | the event it answers (any scope, held outside private/), or none for a root |
+
+- node-chat (field/chat.wisp) takes `msg` only in `chat/main`, and refuses one whose headers carry `in`, `branch` or `re`.
+- A conversation is a root `msg` and every `msg` whose parents chain back to it. A shared ref (`ref/shared`, 0186) names it, and posting under the ref moves it (`lib/chat start`, `say`, `answer`, `read`, `convs`, `follow`).
+- Readers fold `msg` into their own table, never into a branch (lib/chat's `talk`, chat.js's `FieldApp.talk()`).
+- Answers to a `msg` wake its author (0187), as do @mentions. Following a ref wakes on every `msg` grown from its conversation (lib/mail).
+
+```
+msg (a root):    "from tova\n\nwhat should we build?"
+msg (a comment): "from colin\ndoc plan\nsec goal\n\nwhich day?"
 ```
 
 ### 4.3 Legacy bodies
