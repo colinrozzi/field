@@ -176,6 +176,7 @@ chat.set:          "from tova\nbranch fix-login\nkey status\n\nassigned"
 - node-chat (field/chat.wisp) takes `msg` only in `chat/main`, and refuses one whose headers carry `in`, `branch` or `re`.
 - A conversation is a root `msg` and every `msg` whose parents chain back to it. A shared ref (`ref/shared`, 0186) names it, and posting under the ref moves it (`lib/chat start`, `say`, `answer`, `read`, `convs`, `follow`).
 - Readers fold `msg` into their own table, never into a branch (lib/chat's `talk`, chat.js's `FieldApp.talk()`).
+- **No access control (colin, 2026-11-26):** unlike a branch with a closed group, every `msg` is readable by whoever syncs `chat/`, and anyone with an identity may answer any event. Privacy for new talk waits for sealed events (0056); anything private stays in its old closed branch.
 - Answers to a `msg` wake its author (0187), as do @mentions. Following a ref wakes on every `msg` grown from its conversation (lib/mail).
 
 ```
