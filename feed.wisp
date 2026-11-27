@@ -3,8 +3,9 @@
 ; stopped feed loses new events and nothing else.
 ;
 ;   github-events messages -> scope github/REPO, kind github.KIND.ACTION
-;   agent-hook lines       -> scope agents/NAME, kind agent.STATE; "NAME STATE [@ID] DETAIL", parented
-;                             on ID (what the agent works on) else its previous status event (0212)
+;   agent-hook lines       -> scope agents/NAME, kind agent.STATE; "NAME STATE [@ID] DETAIL". Its first
+;                             parent is the agent's previous status event, so they chain; ID (what the agent
+;                             works on) is a second parent only when it differs from the previous one's (0212)
 ;   lib/field-watch lines      -> scope ops/NAME, kind ops.STATE
 ;
 ; Each connects to FEED-LISTEN and writes one "NAME STATE DETAIL\n" line;
@@ -54,6 +55,8 @@
 
   ; an agent's newest status event, by name: its next one's parent when the hook names no work (0212)
   (define LAST (hash-map))
+  ; the work each agent's newest status named, so the same work isn't a parent again (colin, 13:43)
+  (define WORK (hash-map))
   (define hex64? (lambda (t i)
     (if (>= i (string-len t)) (if (= (string-len t) 64) 1 0)
       (let (c (string-ref t i)) (if (or (and (<= 48 c) (<= c 57)) (and (<= 97 c) (<= c 102))) (hex64? t (+ i 1)) 0)))))
@@ -70,11 +73,16 @@
                     (let (prev (match (map-get LAST name) ((some v) v) ((none) "")))
                       (let (scope (string-append "agents/" name))
                         (let (kind (string-append "agent." (substring line (+ i 1) j)))
-                          ; the work it names first; if the store lacks it, its previous status; then none
-                          (let (r (agent-post scope kind detail (if (string=? work "") prev work)))
-                            (let (r2 (if (or (= (string-len r) 64) (string=? work "")) r (agent-post scope kind detail prev)))
-                              (let (r3 (if (or (= (string-len r2) 64) (string=? prev "")) r2 (agent-post scope kind detail "")))
-                                (if (= (string-len r3) 64) (begin (map-set! LAST name r3) "posted") "ignored"))))))))))))))))))
+                          ; the previous status first (a chain), plus the work when it's new; if the store
+                          ; lacks the work, the previous status alone; then none
+                          (let (was (match (map-get WORK name) ((some v) v) ((none) "")))
+                            (let (new-work (if (or (string=? work "") (string=? work was)) "" work))
+                              (let (r (agent-post scope kind detail prev new-work))
+                                (let (r2 (if (or (= (string-len r) 64) (string=? new-work "")) r (agent-post scope kind detail prev "")))
+                                  (let (r3 (if (or (= (string-len r2) 64) (string=? prev "")) r2 (agent-post scope kind detail "" "")))
+                                    (if (= (string-len r3) 64)
+                                      (begin (map-set! LAST name r3) (if (string=? work "") "" (map-set! WORK name work)) "posted")
+                                      "ignored"))))))))))))))))))))
   ; any local process can write a line to the feed (lux): a plain name and a known state only
   (define name-ok? (lambda (t i)
     (if (>= i (string-len t)) (if (and (< 0 (string-len t)) (<= (string-len t) 64)) 1 0)
@@ -82,8 +90,10 @@
         (if (or (and (<= 97 c) (<= c 122)) (or (and (<= 48 c) (<= c 57)) (and (< 0 i) (or (= c 45) (or (= c 46) (= c 95))))))
           (name-ok? t (+ i 1)) 0)))))
   (define state-ok? (lambda (s) (member s (list "working" "idle" "waiting" "exited") string=?)))
-  (define agent-post (lambda (scope kind body parent)
-    (field-post-to FIELD "agents" scope kind body (if (string=? parent "") (list) (list parent)) (list))))
+  ; the parents: the previous status and the work, whichever are set
+  (define agent-post (lambda (scope kind body prev work)
+    (field-post-to FIELD "agents" scope kind body
+      (if (string=? prev "") (if (string=? work "") (list) (list work)) (if (string=? work "") (list prev) (list prev work))) (list))))
 
   (define post-any (lambda (line)
     (if (starts-with line "ops ")
